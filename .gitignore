@@ -223,7 +223,9 @@ dbt/dbt_packages/
 dbt/logs/
 profiles.yml
 
-# Synthetic source data (generated locally, never committed)
+# Synthetic source data (generated locally via `make generate-data`, never committed)
+data/generated/*
+!data/generated/.gitkeep
 data/raw/
 data/processed/
 *.csv

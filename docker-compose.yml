@@ -8,10 +8,17 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_locally}
       POSTGRES_DB: ${POSTGRES_DB:-growth_platform}
     ports:
-      - "5432:5432"
+      # Host port 5433, not 5432: many dev machines already run a native
+      # Postgres service on 5432, which silently intercepts the container's
+      # port mapping. Host-side tools (ingestion, dbt, psql) must therefore
+      # connect via localhost:5433. Inter-container traffic (analytics-api ->
+      # postgres) is unaffected: it uses the "postgres" service name on 5432.
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./app/db/init_schemas.sql:/docker-entrypoint-initdb.d/01_init_schemas.sql:ro
+      - ./app/db/raw_tables.sql:/docker-entrypoint-initdb.d/02_raw_tables.sql:ro
+      - ./app/db/monitoring_tables.sql:/docker-entrypoint-initdb.d/03_monitoring_tables.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-analytics} -d ${POSTGRES_DB:-growth_platform}"]
       interval: 5s

@@ -1,0 +1,6 @@
+organization_id,organization_name,domain,country_code,organization_type,created_at,updated_at
+org_000001,Acme Inc,acme.com,US,business,2025-01-01T00:00:00Z,2025-01-02T00:00:00Z
+org_000002,Beta Startup,beta.io,DE,startup,2025-02-01T00:00:00Z,2025-02-02T00:00:00Z
+org_000003,,,,,,
+org_000001,Acme Inc (Updated),acme.com,US,business,2025-01-01T00:00:00Z,2025-03-01T00:00:00Z
+,No Id Org,noid.com,US,startup,2025-01-01T00:00:00Z,2025-01-01T00:00:00Z

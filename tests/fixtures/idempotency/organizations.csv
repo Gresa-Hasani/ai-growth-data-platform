@@ -1,0 +1,4 @@
+organization_id,organization_name,domain,country_code,organization_type,created_at,updated_at
+itest_org_0001,Idempotency Test Org One,itest1.com,US,startup,2025-01-01T00:00:00Z,2025-01-02T00:00:00Z
+itest_org_0002,Idempotency Test Org Two,itest2.com,DE,business,2025-01-01T00:00:00Z,2025-01-02T00:00:00Z
+itest_org_0003,Idempotency Test Org Three,itest3.com,GB,enterprise,2025-01-01T00:00:00Z,2025-01-02T00:00:00Z

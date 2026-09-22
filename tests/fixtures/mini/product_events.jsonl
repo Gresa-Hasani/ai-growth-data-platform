@@ -1,0 +1,5 @@
+{"event_id": "evt_000000001", "user_id": "usr_000001", "organization_id": "org_000001", "event_name": "account_created", "event_timestamp": "2025-01-01T00:00:00Z", "session_id": "sess_1", "properties": {"platform": "web"}}
+{"event_id": "evt_000000002", "user_id": "usr_000002", "organization_id": "org_000001", "event_name": "voice_generated", "event_timestamp": "2025-01-02T00:00:00Z", "session_id": "sess_2", "properties": {"platform": "api"}}
+{this is not valid json
+{"event_id": "evt_000000003", "user_id": "usr_000003", "organization_id": "org_000002", "event_name": "feature_used", "event_timestamp": "", "session_id": "sess_3", "properties": {}}
+{"event_id": "", "user_id": "usr_000004", "organization_id": "org_000002", "event_name": "feature_used", "event_timestamp": "2025-01-03T00:00:00Z", "session_id": "sess_4", "properties": {}}

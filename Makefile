@@ -1,14 +1,23 @@
-.PHONY: setup generate-data ingest dbt-run dbt-test quality pipeline api test docs clean
+.PHONY: setup generate-data ingest ingest-users ingestion-report test-ingestion dbt-run dbt-test quality pipeline api test docs clean
 
 setup: ## Install Python deps and bring up Postgres + API containers
 	pip install -e ".[dev]"
 	docker compose up -d
 
-generate-data: ## Generate synthetic source data (Phase 2)
-	python scripts/generate_data.py
+generate-data: ## Generate synthetic source data (small scale, seed 42) (Phase 2)
+	python scripts/generate_data.py --scale small --seed 42
 
-ingest: ## Load generated source data into the raw schema (Phase 2)
-	python -m ingestion.pipeline
+ingest: ## Load all generated source data into the raw schema (Phase 2)
+	python -m ingestion.pipeline --source all
+
+ingest-users: ## Load just the users source (Phase 2)
+	python -m ingestion.pipeline --source users
+
+ingestion-report: ## Print the ingestion quality/observability report (Phase 2)
+	python -m ingestion.pipeline --report
+
+test-ingestion: ## Run only the ingestion-related test suite (Phase 2)
+	pytest tests/unit/test_generate_data.py tests/unit/test_loaders.py tests/integration/test_idempotency.py tests/integration/test_failures.py -v
 
 dbt-run: ## Build staging/intermediate/mart models (Phase 3+)
 	cd dbt && dbt run
