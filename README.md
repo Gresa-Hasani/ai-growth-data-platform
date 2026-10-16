@@ -7,15 +7,16 @@ fast-growing AI SaaS company: Python ingestion, a layered dbt warehouse, a self-
 API, and a governed AI data analyst agent.
 
 > **Status:** Phase 1 (Architecture & Infrastructure), Phase 2 (Synthetic Source Systems &
-> Ingestion), Phase 3 (dbt Staging Layer), Phase 4 (dbt Intermediate Layer), and Phase 5
-> (Dimensions, Facts & Growth/Revenue Marts) complete. See [docs/architecture.md](docs/architecture.md)
-> for the full design, [docs/ingestion.md](docs/ingestion.md) for source systems and ingestion, and
+> Ingestion), Phase 3 (dbt Staging Layer), Phase 4 (dbt Intermediate Layer), Phase 5 (Dimensions,
+> Facts & Growth/Revenue Marts), and Phase 6 (Incremental Processing & SCD Type 2 Snapshots)
+> complete. See [docs/architecture.md](docs/architecture.md) for the full design,
+> [docs/ingestion.md](docs/ingestion.md) for source systems and ingestion, and
 > [docs/dbt_staging.md](docs/dbt_staging.md) / [docs/dbt_intermediate.md](docs/dbt_intermediate.md) /
-> [docs/dbt_marts.md](docs/dbt_marts.md) / [docs/business_metrics.md](docs/business_metrics.md) /
-> [docs/data_dictionary.md](docs/data_dictionary.md) for the dbt layers. **Not yet implemented:**
-> dbt snapshots/SCD history, incremental fact models, the FastAPI analytics API, and the AI Data
-> Analyst Agent - do not assume these exist. The complete README (business problem, security,
-> results) is written incrementally as later phases land.
+> [docs/dbt_marts.md](docs/dbt_marts.md) / [docs/incremental_processing.md](docs/incremental_processing.md) /
+> [docs/business_metrics.md](docs/business_metrics.md) / [docs/data_dictionary.md](docs/data_dictionary.md)
+> for the dbt layers. **Not yet implemented:** the FastAPI analytics API and the AI Data Analyst
+> Agent - do not assume these exist. The complete README (business problem, security, results) is
+> written incrementally as later phases land.
 
 ## Quickstart
 
@@ -90,6 +91,27 @@ and [docs/business_metrics.md](docs/business_metrics.md).
 make dbt-run-marts      # dbt run --select tag:dimensions tag:facts tag:growth tag:revenue
 make dbt-test-marts     # dbt test --select tag:dimensions tag:facts tag:growth tag:revenue
 make dbt-build-marts    # run + test together
+```
+
+### Incremental Processing & SCD Type 2 Snapshots (Phase 6)
+
+`fact_product_usage`, `fact_api_usage`, and `fact_invoices` are now `materialized='incremental'`
+(delete+insert, a configurable `incremental_lookback_days` window - default 3 days - filtered on
+`_ingested_at`, **never** business event time). Late arrivals landing in an already-aggregated
+date correctly update that date's totals instead of duplicating them. `fact_subscriptions` stays
+full-refresh on purpose - `raw.subscriptions` is current-state-only, with no event stream to
+process incrementally; that's exactly what the new `snap_subscriptions`/`snap_crm_accounts` dbt
+snapshots solve instead, giving SCD Type 2 history (`dbt_valid_from`/`dbt_valid_to`) for
+subscription status/plan and CRM account status changes **from this point forward** - a snapshot
+cannot recover a transition that happened before its first run; this is documented, not glossed
+over. Full strategy, a real NULL-unique-key bug this phase found and fixed, and the documented
+snapshot limitations: [docs/incremental_processing.md](docs/incremental_processing.md).
+
+```bash
+make dbt-run-incremental            # normal incremental run of the 3 converted facts
+make dbt-full-refresh-incremental   # controlled full-refresh recovery
+make dbt-snapshot                   # run both SCD Type 2 snapshots
+make dbt-test-snapshots             # test both snapshots
 ```
 
 ## Repository structure

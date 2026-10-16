@@ -63,6 +63,11 @@ models:
     description: >
       One row per source invoice_id - identical grain to
       int_customer_revenue, with dimension surrogate keys resolved on top.
+      Incremental as of Phase 6 (materialized='incremental', unique_key=
+      'invoice_id', delete+insert) - see docs/incremental_processing.md.
+      raw.invoices has no updated_at; _ingested_at (from stg_billing__invoices)
+      is the only available change-detection signal, used with a
+      configurable lookback (var incremental_lookback_days, default 3).
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments:
@@ -70,10 +75,14 @@ models:
               - invoice_id
     columns:
       - name: invoice_id
-        description: Technical primary key, inherited unchanged from staging/intermediate.
+        description: Technical primary key, inherited unchanged from staging/intermediate. Also this model's incremental unique_key.
         data_tests:
           - not_null
           - unique
+      - name: _last_ingested_at
+        description: The invoice's own _ingested_at from staging - this run's high-water mark input for the next incremental run.
+        data_tests:
+          - not_null
       - name: organization_key
         description: FK to dim_organizations.organization_key; NULL when is_organization_unmatched.
         data_tests:
@@ -102,10 +111,18 @@ models:
   - name: fact_product_usage
     description: >
       One row per (date_day, user_id, organization_id, event_name) -
-      identical grain to int_daily_product_usage, with dimension keys
-      resolved. Does not re-aggregate; cannot introduce usage inflation
-      beyond what Phase 4 already verified.
+      unchanged grain from Phase 4/5. Incremental as of Phase 6
+      (materialized='incremental', unique_key='usage_grain_key',
+      delete+insert) - see docs/incremental_processing.md. Rebuilds every
+      affected calendar date FROM ALL of that date's events whenever any
+      event for that date was ingested within the lookback window
+      (var incremental_lookback_days, default 3 days), so late arrivals
+      correctly add to - never duplicate - that date's totals.
     data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - usage_grain_key
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns:
@@ -114,26 +131,55 @@ models:
               - organization_key
               - event_name
     columns:
+      - name: usage_grain_key
+        description: >
+          dbt_utils.generate_surrogate_key over the COALESCE-guarded grain
+          columns - the actual incremental unique_key. Exists because
+          user_id/organization_id are legitimately nullable, and
+          delete+insert's equality-based row matching cannot replace a
+          NULL-keyed row on rerun without this.
+        data_tests:
+          - not_null
+          - unique
       - name: date_day
         description: Calendar date of the events (event time, not ingestion time).
         data_tests:
           - not_null
+      - name: user_id
+        description: Raw nullable business key, re-exposed in Phase 6 alongside user_key (a Phase 5 gap fixed for the incremental grain key - see model SQL).
+      - name: organization_id
+        description: Raw nullable business key, re-exposed in Phase 6 alongside organization_key.
       - name: event_count
         description: Passthrough from int_daily_product_usage.
         data_tests:
           - positive_or_zero
+      - name: _last_ingested_at
+        description: Max _ingested_at among the events contributing to this row - this run's high-water mark input for the next incremental run.
+        data_tests:
+          - not_null
 
   - name: fact_api_usage
     description: >
-      One row per (date_day, organization_id) - identical grain to
-      int_api_usage_by_customer, with organization_key resolved.
+      One row per (date_day, organization_id) - unchanged grain from
+      Phase 4/5. Incremental as of Phase 6 (materialized='incremental',
+      unique_key='usage_grain_key', delete+insert) - identical strategy to
+      fact_product_usage, applied to raw.api_usage.
     data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - usage_grain_key
       - dbt_utils.unique_combination_of_columns:
           arguments:
             combination_of_columns:
               - date_day
               - organization_key
     columns:
+      - name: usage_grain_key
+        description: dbt_utils.generate_surrogate_key over the COALESCE-guarded grain - the actual incremental unique_key (organization_id is nullable; see fact_product_usage for why this is needed).
+        data_tests:
+          - not_null
+          - unique
       - name: date_day
         description: Calendar date of the requests.
         data_tests:
@@ -146,3 +192,7 @@ models:
         description: Passthrough from int_api_usage_by_customer (via safe_divide).
         data_tests:
           - percentage_between_zero_and_one
+      - name: _last_ingested_at
+        description: Max _ingested_at among the requests contributing to this row - this run's high-water mark input for the next incremental run.
+        data_tests:
+          - not_null

@@ -22,6 +22,14 @@ vars:
   staging_freshness_warn_after_hours: 24
   staging_freshness_error_after_hours: 48
 
+  # Phase 6: how many days before each incremental model's own high-water
+  # mark (max _ingested_at already processed) to re-scan on every run, so
+  # late-arriving/updated source rows are picked up without a full
+  # historical rebuild. See docs/incremental_processing.md for the full
+  # rationale and its documented limits (a late arrival older than this
+  # window requires a manual --full-refresh - see that doc's "Recovery").
+  incremental_lookback_days: 3
+
 models:
   growth_platform:
     staging:

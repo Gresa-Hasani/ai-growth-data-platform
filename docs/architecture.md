@@ -102,6 +102,7 @@ flowchart TD
 | `intermediate` | dbt | Reusable business transforms joining multiple staging models (e.g. subscription history, customer revenue, conversion funnels). |
 | `analytics` | dbt | Business-facing marts: dimensions, facts, and growth/revenue marts. This is the only schema the API and AI agent read from. |
 | `monitoring` | Ingestion + dbt + API | Operational metadata: ingestion audit log, data quality results, AI agent query logs. |
+| `snapshots` | dbt (Phase 6) | SCD Type 2 history for subscriptions and CRM accounts (`snap_subscriptions`, `snap_crm_accounts`). |
 
 ## Why schemas instead of separate databases
 
@@ -167,6 +168,17 @@ explicitly documented as point-in-time snapshots, not historical time series - t
 status-change history to reconstruct one from (that's what Phase 6 snapshots are for). See
 [dbt_marts.md](dbt_marts.md) and [business_metrics.md](business_metrics.md).
 
+**Phase 6** - `fact_product_usage`, `fact_api_usage`, and `fact_invoices` converted to
+`materialized='incremental'` (delete+insert, a configurable `incremental_lookback_days` window
+filtered on `_ingested_at`, never business event time). Two dbt snapshots
+(`snap_subscriptions`, `snap_crm_accounts`) added for SCD Type 2 history, using the `timestamp`
+strategy on each source's genuine `updated_at` field, landing in a new `snapshots` schema.
+`fact_subscriptions` was deliberately left as a full-refresh table - `raw.subscriptions` is a
+current-state-only source with no event stream to process incrementally; that's precisely the
+problem the snapshot solves instead. See [incremental_processing.md](incremental_processing.md)
+for the full strategy, a real bug this phase found and fixed (a NULL-unique-key issue in the two
+aggregate facts), and the documented limits of what snapshots can and cannot recover.
+
 ## Pipeline flow (updated)
 
 ```
@@ -182,13 +194,13 @@ raw.* (PostgreSQL)
 dbt sources + freshness (Phase 3)
         |
         v
-dbt staging: stg_<domain>__<entity> (Phase 3)
+dbt staging: stg_<domain>__<entity> (Phase 3) --> dbt snapshots: snap_* (Phase 6, SCD Type 2)
         |
         v
 dbt intermediate: int_<entity> (Phase 4)
         |
         v
-dbt dimensions + facts: dim_*, fact_* (Phase 5)
+dbt dimensions + facts: dim_*, fact_* (Phase 5; 3 facts incremental as of Phase 6)
         |
         v
 dbt marts: mart_<growth|revenue>_* (Phase 5) <-- you are here
@@ -199,5 +211,5 @@ separate concerns: ingestion's job is "land the source data faithfully, however 
 starts at `staging` and is "make it trustworthy." Nothing upstream of `raw.*` is ever modified to
 make a dbt model easier to write.
 
-Not yet implemented: dbt snapshots/SCD Type 2 history, incremental fact models, the FastAPI
-analytics API, and the AI Data Analyst Agent - all later phases per the project plan.
+Not yet implemented: the FastAPI analytics API and the AI Data Analyst Agent - later phases per
+the project plan.

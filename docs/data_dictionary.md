@@ -169,3 +169,23 @@ for exact metric formulas. Grains only, here:
 | `mart_revenue_churn` | one row per currency, same fixed 30-day period |
 | `mart_customer_ltv` | one row per (organization_key, currency) |
 | `mart_api_usage` | one row per (month_start_date, organization_key) |
+
+## Incremental facts & snapshots (Phase 6)
+
+See [incremental_processing.md](incremental_processing.md) for the full filter/lookback/recovery
+strategy and the documented snapshot limitations.
+
+| Model | Grain | Materialization |
+|---|---|---|
+| `fact_product_usage` | (date_day, user_id, organization_id, event_name) | `incremental` (delete+insert, unique_key=`usage_grain_key`) |
+| `fact_api_usage` | (date_day, organization_id) | `incremental` (delete+insert, unique_key=`usage_grain_key`) |
+| `fact_invoices` | invoice_id | `incremental` (delete+insert, unique_key=`invoice_id`) |
+| `fact_subscriptions` | subscription_id | unchanged (`table`, full refresh - current-state-only source) |
+| `snap_subscriptions` | one row per (subscription_id, historical version) | `snapshot` (SCD Type 2, timestamp strategy on `updated_at`) |
+| `snap_crm_accounts` | one row per (crm_account_id, historical version) | `snapshot` (SCD Type 2, timestamp strategy on `updated_at`) |
+
+**Note on comparing row counts**: `snap_subscriptions`/`snap_crm_accounts` intentionally retain
+every historical version of a record - their row count is *not* comparable to
+`stg_billing__subscriptions`/`stg_crm__accounts`' row counts (one row per *current* record) the
+way every other grain comparison in this document is. Compare only the **current-record subset**
+(`WHERE dbt_valid_to IS NULL`) against staging if you need a like-for-like count.

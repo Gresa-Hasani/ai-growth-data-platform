@@ -1,0 +1,68 @@
+version: 2
+
+snapshots:
+  - name: snap_subscriptions
+    description: >
+      SCD Type 2 history of subscription status and plan, built on
+      stg_billing__subscriptions with the timestamp strategy on updated_at
+      (a genuine source timestamp, not _ingested_at - see model SQL).
+      IMPORTANT: this can only capture changes that happen between two
+      snapshot runs - raw.subscriptions stores only current state, so any
+      transition before this snapshot's first run is permanently
+      unobservable. See docs/incremental_processing.md "Snapshot
+      limitations."
+    data_tests:
+      - valid_timestamp_order:
+          arguments:
+            start_column: dbt_valid_from
+            end_column: dbt_valid_to
+          config:
+            severity: error
+    columns:
+      - name: subscription_id
+        description: Stable business key. Not unique across the whole table by design (historical versions share it) - unique only among current rows, tested below.
+        data_tests:
+          - not_null
+          - unique:
+              config:
+                where: "dbt_valid_to is null"
+      - name: dbt_valid_from
+        description: When this version became current.
+        data_tests:
+          - not_null
+      - name: dbt_valid_to
+        description: When this version was superseded; NULL for the current version.
+      - name: status
+        description: Subscription status at this point in its history.
+      - name: plan_name
+        description: Subscription plan at this point in its history.
+
+  - name: snap_crm_accounts
+    description: >
+      SCD Type 2 history of CRM account status/segment/ownership, built on
+      stg_crm__accounts with the timestamp strategy on updated_at. Same
+      "cannot recover history before the first run" limitation as
+      snap_subscriptions applies here.
+    data_tests:
+      - valid_timestamp_order:
+          arguments:
+            start_column: dbt_valid_from
+            end_column: dbt_valid_to
+          config:
+            severity: error
+    columns:
+      - name: crm_account_id
+        description: Stable business key. Not unique across the whole table by design (historical versions share it) - unique only among current rows, tested below.
+        data_tests:
+          - not_null
+          - unique:
+              config:
+                where: "dbt_valid_to is null"
+      - name: dbt_valid_from
+        description: When this version became current.
+        data_tests:
+          - not_null
+      - name: dbt_valid_to
+        description: When this version was superseded; NULL for the current version.
+      - name: account_status
+        description: CRM account status at this point in its history.
