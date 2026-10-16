@@ -8,16 +8,18 @@ API, and a governed AI data analyst agent.
 
 > **Status:** Phase 1 (Architecture & Infrastructure), Phase 2 (Synthetic Source Systems &
 > Ingestion), Phase 3 (dbt Staging Layer), Phase 4 (dbt Intermediate Layer), Phase 5 (Dimensions,
-> Facts & Growth/Revenue Marts), Phase 6 (Incremental Processing & SCD Type 2 Snapshots), and
-> Phase 7 (Data Quality & Observability) complete. See [docs/architecture.md](docs/architecture.md)
-> for the full design, [docs/ingestion.md](docs/ingestion.md) for source systems and ingestion, and
+> Facts & Growth/Revenue Marts), Phase 6 (Incremental Processing & SCD Type 2 Snapshots), Phase 7
+> (Data Quality & Observability), and Phase 8 (Self-Service Analytics API) complete. See
+> [docs/architecture.md](docs/architecture.md) for the full design,
+> [docs/ingestion.md](docs/ingestion.md) for source systems and ingestion, and
 > [docs/dbt_staging.md](docs/dbt_staging.md) / [docs/dbt_intermediate.md](docs/dbt_intermediate.md) /
 > [docs/dbt_marts.md](docs/dbt_marts.md) / [docs/incremental_processing.md](docs/incremental_processing.md) /
 > [docs/data_quality_observability.md](docs/data_quality_observability.md) /
-> [docs/business_metrics.md](docs/business_metrics.md) / [docs/data_dictionary.md](docs/data_dictionary.md)
-> for the dbt layers. **Not yet implemented:** the FastAPI analytics API and the AI Data Analyst
-> Agent - do not assume these exist. The complete README (business problem, security, results) is
-> written incrementally as later phases land.
+> [docs/analytics_api.md](docs/analytics_api.md) / [docs/business_metrics.md](docs/business_metrics.md) /
+> [docs/data_dictionary.md](docs/data_dictionary.md) for the full layer-by-layer detail.
+> **Not yet implemented:** the AI Data Analyst Agent, natural-language-to-SQL, and the full SQL
+> security/validation layer - do not assume these exist. The complete README (business problem,
+> security, results) is written incrementally as later phases land.
 
 ## Quickstart
 
@@ -132,6 +134,27 @@ make quality          # run every check
 make quality-latest   # show the most recently persisted run, without re-running
 make quality-json     # machine-readable JSON output
 make test-quality     # run the quality-framework's own test suite
+```
+
+### Self-Service Analytics API (Phase 8)
+
+A read-only FastAPI service over the `analytics.*`/`monitoring.*` layer: 17 endpoints across
+growth, revenue, product usage, customers, and data-quality summaries (`/api/v1/analytics/growth/*`,
+`/api/v1/analytics/revenue/*`, `/api/v1/analytics/usage/*`, `/api/v1/customers*`,
+`/api/v1/quality/*`), plus `/health` (pure process liveness) and `/ready` (DB + required analytics
+objects reachable). Every query is a fixed, parameterized SQL string - no client-supplied SQL or
+table names. Currency is never mixed across rows (every revenue response is per-currency, using
+`Decimal` throughout - never `float`); `customer_id` is always `organization_id`, matching the
+"customer = organization" convention from Phase 4/5. MRR/ARR/ARPU are documented as point-in-time
+snapshots, inherited unchanged from the marts underneath. Full endpoint inventory, example
+requests/responses, and validation rules: [docs/analytics_api.md](docs/analytics_api.md).
+
+```bash
+docker compose up -d
+curl http://localhost:8000/health
+curl http://localhost:8000/ready
+open http://localhost:8000/docs                          # interactive OpenAPI UI
+pytest tests/unit/test_api_unit.py tests/integration/test_api_integration.py -v
 ```
 
 ## Repository structure

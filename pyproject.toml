@@ -41,5 +41,12 @@ include = ["app*", "ingestion*", "scripts*"]
 line-length = 100
 target-version = "py312"
 
+[tool.ruff.lint]
+ignore = [
+    "B008",   # Depends()/Query() in a default argument IS the FastAPI dependency-injection idiom
+    "DTZ011", # date.today() is intentional here - these are calendar dates (matching mart `date` columns), not timestamps
+    "UP046",  # Pydantic v2 generic models still need `Generic[T]`, not PEP 695 `class Page[T]`, for runtime resolution
+]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]

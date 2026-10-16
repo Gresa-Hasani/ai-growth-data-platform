@@ -1,4 +1,4 @@
-.PHONY: setup generate-data ingest ingest-users ingestion-report test-ingestion dbt-deps dbt-debug dbt-freshness dbt-run-staging dbt-test-staging dbt-build-staging dbt-run-intermediate dbt-test-intermediate dbt-build-intermediate dbt-run-marts dbt-test-marts dbt-build-marts dbt-run-incremental dbt-full-refresh-incremental dbt-snapshot dbt-test-snapshots dbt-run dbt-test dbt-docs quality quality-latest quality-json test-quality pipeline api test docs clean
+.PHONY: setup generate-data ingest ingest-users ingestion-report test-ingestion dbt-deps dbt-debug dbt-freshness dbt-run-staging dbt-test-staging dbt-build-staging dbt-run-intermediate dbt-test-intermediate dbt-build-intermediate dbt-run-marts dbt-test-marts dbt-build-marts dbt-run-incremental dbt-full-refresh-incremental dbt-snapshot dbt-test-snapshots dbt-run dbt-test dbt-docs quality quality-latest quality-json test-quality pipeline api test-api test docs clean
 
 setup: ## Install Python deps and bring up Postgres + API containers
 	pip install -e ".[dev]"
@@ -90,6 +90,9 @@ pipeline: ## Run the full orchestrated pipeline end-to-end (Phase 24)
 
 api: ## Run the FastAPI service locally (outside Docker)
 	uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+test-api: ## Run only the analytics API test suite (Phase 8)
+	pytest tests/unit/test_api_unit.py tests/integration/test_api_integration.py -v
 
 test: ## Run the Python test suite
 	pytest

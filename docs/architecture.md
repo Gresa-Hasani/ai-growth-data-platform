@@ -187,6 +187,13 @@ volume-anomaly categories. Extends - never replaces - Phase 3's WARN-vs-ERROR po
 intentional synthetic-data anomalies; the 9 pre-existing dbt WARNs remain exactly as visible as
 before. See [data_quality_observability.md](data_quality_observability.md).
 
+**Phase 8** - A read-only self-service analytics API (FastAPI) over the `analytics.*`/`monitoring.*`
+layer: 17 endpoints across growth, revenue, product usage, customers, and data-quality summaries,
+plus `/health` (pure process liveness) and `/ready` (DB + required analytics objects reachable -
+the Docker healthcheck target, replacing Phase 1's DB-backed `/health`). Every query is a fixed,
+parameterized SQL string - no client-supplied SQL or table names, currency is never mixed across
+rows, and `customer_id` is always `organization_id`. See [analytics_api.md](analytics_api.md).
+
 ## Pipeline flow (updated)
 
 ```
@@ -214,7 +221,10 @@ dbt dimensions + facts: dim_*, fact_* (Phase 5; 3 facts incremental as of Phase 
 dbt marts: mart_<growth|revenue>_* (Phase 5)
         |
         v
-scripts/run_quality_checks.py --> monitoring.quality_runs / data_quality_results (Phase 7) <-- you are here
+scripts/run_quality_checks.py --> monitoring.quality_runs / data_quality_results (Phase 7)
+        |
+        v
+FastAPI analytics API: /api/v1/* (Phase 8) <-- you are here
 ```
 
 Raw ingestion (Python, Phase 2) and analytical transformation (dbt, Phase 3+) are deliberately
@@ -222,5 +232,5 @@ separate concerns: ingestion's job is "land the source data faithfully, however 
 starts at `staging` and is "make it trustworthy." Nothing upstream of `raw.*` is ever modified to
 make a dbt model easier to write.
 
-Not yet implemented: the FastAPI analytics API and the AI Data Analyst Agent - later phases per
-the project plan.
+Not yet implemented: the AI Data Analyst Agent, natural-language-to-SQL, and the full SQL
+security/validation layer - later phases per the project plan.
