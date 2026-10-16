@@ -1,0 +1,50 @@
+version: 2
+
+sources:
+  - name: crm
+    description: >
+      Simulated CRM (customer relationship management) system: account
+      lifecycle touches maintained by Sales/Success teams. Ingested by the
+      Phase 2 Python pipeline into the raw schema.
+    database: "{{ target.dbname }}"
+    schema: raw
+    loader: python (ingestion.pipeline)
+    loaded_at_field: _ingested_at
+
+    freshness:
+      warn_after: {count: 24, period: hour}
+      error_after: {count: 48, period: hour}
+
+    tables:
+      - name: crm_accounts
+        description: >
+          Raw CRM account touch records - multiple rows per organization
+          over its lifecycle (not one row per organization; see
+          docs/ingestion.md on CRM cardinality). Cleaned in
+          stg_crm__accounts.
+        columns:
+          - name: crm_account_id
+            description: Source system's CRM touch identifier. Technical primary key.
+            data_tests:
+              - not_null
+              - unique
+          - name: organization_id
+            description: The organization this CRM touch belongs to. May reference an organization_id that does not exist - Phase 2 intentionally injects a low rate of orphaned FKs.
+          - name: account_status
+            description: "CRM lifecycle status as delivered by the source: prospect, active, at_risk, churned."
+          - name: segment
+            description: "Account segment as delivered by the source: smb, mid_market, enterprise."
+          - name: owner_team
+            description: Internal team that owns this account relationship.
+          - name: lead_source
+            description: How this account was originally sourced; intentionally NULL for a subset of rows.
+          - name: created_at
+            description: ISO-8601 timestamp string of when this CRM touch was created.
+          - name: updated_at
+            description: ISO-8601 timestamp string of when this CRM touch was last updated. Used to resolve duplicate crm_account_id deliveries.
+          - name: _ingested_at
+            description: When the Phase 2 ingestion pipeline last wrote/updated this row.
+          - name: _source_file
+            description: The source file this row was loaded from (crm_accounts.csv).
+          - name: _run_id
+            description: The monitoring.ingestion_runs.run_id that wrote/last touched this row.

@@ -1,0 +1,102 @@
+version: 2
+
+sources:
+  - name: app
+    description: >
+      Simulated application database: the system of record for user accounts
+      and the organizations they belong to. Ingested by the Phase 2 Python
+      pipeline (ingestion/pipeline.py) into the raw schema.
+    database: "{{ target.dbname }}"
+    schema: raw
+    loader: python (ingestion.pipeline)
+    loaded_at_field: _ingested_at
+
+    freshness:
+      # _ingested_at reflects when ingestion last wrote the row, not the
+      # (deliberately historical, multi-year) business timestamps in the
+      # source data - so a freshness check against it is meaningful even
+      # though created_at/signup_at span back to 2023. 24h/48h is a
+      # development-friendly threshold: re-running `make ingest` daily
+      # keeps this green; anyone who hasn't ingested in 2 days gets an error.
+      warn_after: {count: 24, period: hour}
+      error_after: {count: 48, period: hour}
+
+    tables:
+      - name: users
+        description: >
+          Raw user account records ingested from the simulated application
+          database. One row per user_id as delivered by the source system -
+          intentionally includes invalid emails, messy country codes,
+          orphaned organization_id references, and occasional duplicate
+          user_id deliveries (see docs/ingestion.md "Intentional data-quality
+          issues"). Cleaned in stg_app__users.
+        columns:
+          - name: user_id
+            description: Source system's user identifier. Technical primary key.
+            data_tests:
+              - not_null
+              - unique
+          - name: organization_id
+            description: >
+              The organization this user belongs to. May reference an
+              organization_id that does not exist in raw.organizations -
+              Phase 2 intentionally injects orphaned foreign keys at a low
+              rate to simulate real source-system drift.
+          - name: email
+            description: >
+              User's email address as delivered by the source, including
+              intentionally invalid formats (missing "@", missing domain,
+              embedded whitespace) at ~1.5% of rows.
+          - name: country_code
+            description: >
+              Country code as delivered by the source. Intentionally messy:
+              a mix of "US", "USA", "us", "United States", and similar
+              variants for a subset of rows.
+          - name: signup_at
+            description: ISO-8601 timestamp string of when the user signed up, as delivered by the source.
+          - name: acquisition_channel
+            description: The marketing/growth channel attributed to this user's signup (organic, paid_search, referral, ...).
+          - name: status
+            description: User lifecycle status as delivered by the source (active, trial, churned).
+          - name: created_at
+            description: ISO-8601 timestamp string; source-system record creation time.
+          - name: updated_at
+            description: ISO-8601 timestamp string; source-system last-modified time. Used to resolve duplicate user_id deliveries.
+          - name: _ingested_at
+            description: When the Phase 2 ingestion pipeline last wrote/updated this row.
+          - name: _source_file
+            description: The source file this row was loaded from (users.csv).
+          - name: _run_id
+            description: The monitoring.ingestion_runs.run_id that wrote/last touched this row.
+
+      - name: organizations
+        description: >
+          Raw organization/account records ingested from the simulated
+          application database. One row per organization_id as delivered by
+          the source system - intentionally includes messy country codes,
+          mixed-case organization names, and whitespace padding. Cleaned in
+          stg_app__organizations.
+        columns:
+          - name: organization_id
+            description: Source system's organization identifier. Technical primary key.
+            data_tests:
+              - not_null
+              - unique
+          - name: organization_name
+            description: Organization's display name as delivered by the source (may have leading/trailing whitespace or mixed casing).
+          - name: domain
+            description: Organization's primary domain, if known.
+          - name: country_code
+            description: Country code as delivered by the source (intentionally messy - see stg_app__organizations for normalization).
+          - name: organization_type
+            description: "Business segment as delivered by the source: individual, startup, business, or enterprise."
+          - name: created_at
+            description: ISO-8601 timestamp string; source-system record creation time.
+          - name: updated_at
+            description: ISO-8601 timestamp string; source-system last-modified time.
+          - name: _ingested_at
+            description: When the Phase 2 ingestion pipeline last wrote/updated this row.
+          - name: _source_file
+            description: The source file this row was loaded from (organizations.csv).
+          - name: _run_id
+            description: The monitoring.ingestion_runs.run_id that wrote/last touched this row.

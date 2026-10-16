@@ -1,4 +1,4 @@
-.PHONY: setup generate-data ingest ingest-users ingestion-report test-ingestion dbt-run dbt-test quality pipeline api test docs clean
+.PHONY: setup generate-data ingest ingest-users ingestion-report test-ingestion dbt-deps dbt-debug dbt-freshness dbt-run-staging dbt-test-staging dbt-build-staging dbt-run-intermediate dbt-test-intermediate dbt-build-intermediate dbt-run dbt-test dbt-docs quality pipeline api test docs clean
 
 setup: ## Install Python deps and bring up Postgres + API containers
 	pip install -e ".[dev]"
@@ -19,6 +19,33 @@ ingestion-report: ## Print the ingestion quality/observability report (Phase 2)
 test-ingestion: ## Run only the ingestion-related test suite (Phase 2)
 	pytest tests/unit/test_generate_data.py tests/unit/test_loaders.py tests/integration/test_idempotency.py tests/integration/test_failures.py -v
 
+dbt-deps: ## Install dbt packages (dbt-utils) (Phase 3)
+	cd dbt && dbt deps
+
+dbt-debug: ## Validate dbt profile/connection (Phase 3)
+	cd dbt && dbt debug
+
+dbt-freshness: ## Check source freshness against _ingested_at (Phase 3)
+	cd dbt && dbt source freshness
+
+dbt-run-staging: ## Build only the staging models (Phase 3)
+	cd dbt && dbt run --select staging
+
+dbt-test-staging: ## Run only the staging tests (Phase 3)
+	cd dbt && dbt test --select staging
+
+dbt-build-staging: ## Run + test the staging layer together (Phase 3)
+	cd dbt && dbt build --select staging
+
+dbt-run-intermediate: ## Build only the intermediate models (Phase 4)
+	cd dbt && dbt run --select intermediate
+
+dbt-test-intermediate: ## Run only the intermediate tests (Phase 4)
+	cd dbt && dbt test --select intermediate
+
+dbt-build-intermediate: ## Run + test the intermediate layer together (Phase 4)
+	cd dbt && dbt build --select intermediate
+
 dbt-run: ## Build staging/intermediate/mart models (Phase 3+)
 	cd dbt && dbt run
 
@@ -37,7 +64,9 @@ api: ## Run the FastAPI service locally (outside Docker)
 test: ## Run the Python test suite
 	pytest
 
-docs: ## Generate and serve dbt docs (Phase 17+)
+docs: dbt-docs ## Alias for dbt-docs
+
+dbt-docs: ## Generate and serve dbt docs (Phase 3+)
 	cd dbt && dbt docs generate && dbt docs serve
 
 clean: ## Tear down containers and remove local volumes

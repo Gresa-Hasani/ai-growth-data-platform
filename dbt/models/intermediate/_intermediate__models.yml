@@ -1,0 +1,337 @@
+version: 2
+
+models:
+  - name: int_user_subscription_history
+    description: >
+      One row per subscription, enriched with its user's signup context.
+      Grain: one row per subscription_id (identical cardinality to
+      stg_billing__subscriptions - this model never aggregates). Orphaned
+      user_id references (Phase 2's intentional corruption) are preserved
+      and flagged via is_user_orphaned, never silently dropped or
+      manufactured into a fake user.
+    columns:
+      - name: subscription_id
+        description: Technical primary key, inherited unchanged from staging.
+        data_tests:
+          - not_null
+          - unique
+      - name: user_id
+        description: The subscribing user, if resolvable.
+      - name: organization_id
+        description: The subscribing organization.
+      - name: is_user_orphaned
+        description: True when user_id is present but doesn't resolve to a row in stg_app__users.
+      - name: user_signup_at
+        description: The user's signup_at, for computing days_from_signup_to_subscription_start. NULL when the user is orphaned or user_id is null.
+      - name: plan_name
+        description: Passthrough from stg_billing__subscriptions.
+      - name: is_plan_missing
+        description: Passthrough from stg_billing__subscriptions.
+      - name: status
+        description: Passthrough from stg_billing__subscriptions.
+      - name: subscription_amount
+        description: Passthrough from stg_billing__subscriptions.
+        data_tests:
+          - positive_or_zero
+      - name: started_at
+        description: Passthrough from stg_billing__subscriptions.
+      - name: trial_started_at
+        description: Passthrough from stg_billing__subscriptions.
+      - name: trial_ended_at
+        description: Passthrough from stg_billing__subscriptions.
+      - name: cancelled_at
+        description: Passthrough from stg_billing__subscriptions.
+      - name: days_from_signup_to_subscription_start
+        description: Days between the user's signup and this subscription's start; NULL if either timestamp or the user relationship is unavailable.
+
+  - name: int_user_acquisition
+    description: >
+      One row per user, with a single-touch (first-touch), deterministic
+      acquisition attribution. Grain: one row per user_id. acquisition_channel
+      (from stg_app__users, always present) is the authoritative channel;
+      attributed_* fields supplement it with campaign/UTM detail from the
+      earliest marketing_events row actually linked to that user_id, if any.
+      This is explicitly NOT multi-touch attribution.
+    columns:
+      - name: user_id
+        description: Technical primary key.
+        data_tests:
+          - not_null
+          - unique
+      - name: organization_id
+        description: The user's organization.
+      - name: acquisition_channel
+        description: Authoritative acquisition channel, directly recorded on the user record at signup.
+      - name: has_known_marketing_touch
+        description: True if at least one marketing_events row has this user_id (i.e. attribution detail below is populated, not just the channel).
+      - name: attributed_marketing_event_id
+        description: The marketing_event_id chosen by the first-touch tie-break rule (earliest event_timestamp, then marketing_event_id).
+      - name: attributed_campaign_id
+        description: Campaign ID from the attributed touch; NULL if unattributed (consistent with stg_marketing__events, where ~15% of rows have no campaign_id).
+      - name: is_campaign_attributed
+        description: True when attributed_campaign_id is present. False (not NULL) both when there's a known touch with no campaign and when there's no known touch at all.
+
+  - name: int_customer_revenue
+    description: >
+      One row per invoice (a reusable financial FACT, not a customer-period
+      aggregate - MRR/ARR belong to Phase 5). Grain: one row per invoice_id.
+      "Customer" = organization here (see docs/dbt_intermediate.md). No
+      refund/credit/outstanding-ledger data exists in this source;
+      billed/paid/outstanding amounts are derived purely from invoice
+      status, not from separate ledger entries.
+    data_tests:
+      - positive_or_zero:
+          arguments:
+            column_name: billed_amount
+      - positive_or_zero:
+          arguments:
+            column_name: paid_amount
+      - positive_or_zero:
+          arguments:
+            column_name: outstanding_amount
+    columns:
+      - name: invoice_id
+        description: Technical primary key, inherited unchanged from staging.
+        data_tests:
+          - not_null
+          - unique
+      - name: subscription_id
+        description: The subscription this invoice was generated against, if any.
+      - name: is_subscription_orphaned
+        description: True when subscription_id is present but doesn't resolve to a row in stg_billing__subscriptions.
+      - name: customer_id
+        description: The billing entity - the subscription's organization_id, falling back to the invoice's own customer_id if the subscription can't be resolved.
+      - name: currency
+        description: Passthrough from stg_billing__invoices. Never summed across different currencies anywhere in this model.
+      - name: billed_amount
+        description: What was invoiced (= total_amount), regardless of payment outcome.
+      - name: paid_amount
+        description: Cash actually collected - total_amount when status = 'paid', else 0.
+      - name: outstanding_amount
+        description: Billed but not yet resolved either way - total_amount when status in ('open', 'failed'), else 0.
+      - name: issued_at
+        description: Passthrough from stg_billing__invoices.
+      - name: paid_at
+        description: Passthrough from stg_billing__invoices.
+
+  - name: int_daily_product_usage
+    description: >
+      Product usage aggregated to (event_date, user_id, organization_id,
+      event_name). event_date is derived from event_timestamp (event time),
+      not _ingested_at - late-arriving events land on the calendar day they
+      actually happened on, with no cutoff filtering. Trade-off: keeping
+      event_name in the grain avoids collapsing feature-level detail that
+      Phase 5 feature-adoption/retention marts will need; a user-day total
+      is one more `sum() group by event_date, user_id` away.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - event_date
+              - user_id
+              - organization_id
+              - event_name
+    columns:
+      - name: event_date
+        description: Calendar date of event_timestamp (UTC).
+        data_tests:
+          - not_null
+      - name: user_id
+        description: Passthrough from stg_product__events.
+      - name: event_name
+        description: Passthrough from stg_product__events.
+      - name: event_count
+        description: Number of events for this user/org/event_name/date.
+        data_tests:
+          - positive_or_zero
+      - name: distinct_session_count
+        description: Number of distinct session_id values among this group's events.
+        data_tests:
+          - positive_or_zero
+      - name: first_event_at
+        description: Earliest event_timestamp in this group.
+      - name: last_event_at
+        description: Latest event_timestamp in this group.
+
+  - name: int_api_usage_by_customer
+    description: >
+      API usage aggregated to (usage_date, organization_id) - "customer"
+      here means organization, consistent with int_customer_revenue.
+      Rows with organization_id = null are kept (not dropped) for
+      data-quality visibility, flagged via is_organization_unknown.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - usage_date
+              - organization_id
+    columns:
+      - name: usage_date
+        description: Calendar date of request_timestamp (UTC).
+        data_tests:
+          - not_null
+      - name: organization_id
+        description: Billing organization, or NULL if unresolvable.
+      - name: is_organization_unknown
+        description: True when organization_id is NULL - surfaced, not discarded.
+      - name: request_count
+        description: Total API requests for this organization/date.
+        data_tests:
+          - positive_or_zero
+      - name: error_request_count
+        description: Requests where status_code was not in the 2xx range.
+        data_tests:
+          - positive_or_zero
+      - name: error_rate
+        description: error_request_count / request_count, via the safe_divide macro (NULL when request_count is 0, never a division error).
+      - name: total_estimated_cost
+        description: Sum of estimated_cost across this organization/date's requests.
+        data_tests:
+          - positive_or_zero
+
+  - name: int_subscription_transitions
+    description: >
+      An ORDERED MILESTONE TIMELINE per subscription, derived from the
+      timestamp fields already present on each subscription's single
+      current-state row (trial_started_at, trial_ended_at, started_at,
+      cancelled_at) - NOT a true historical change-event log, which this
+      source does not provide. Every transition_at is copied directly from
+      a real staging column; none are inferred. Plan-change transitions are
+      not included (a current-state row can't reveal a prior plan). Grain:
+      one row per (subscription_id, transition_type) that actually has a
+      non-null timestamp.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - subscription_id
+              - transition_type
+      - accepted_values:
+          arguments:
+            column_name: transition_type
+            values: ["trial_started", "trial_ended", "subscription_started", "subscription_cancelled"]
+    columns:
+      - name: subscription_id
+        description: The subscription this milestone belongs to.
+        data_tests:
+          - not_null
+      - name: transition_type
+        description: Which milestone this row represents.
+      - name: transition_at
+        description: The milestone's timestamp, copied directly from the corresponding staging column.
+        data_tests:
+          - not_null
+      - name: previous_transition_type
+        description: The prior milestone for this subscription in sequence, via LAG(); NULL for the first milestone.
+      - name: days_since_previous_transition
+        description: Days between this milestone and the previous one for the same subscription; NULL for the first milestone.
+
+  - name: int_customer_activity
+    description: >
+      Daily organization-level activity combining product usage and API
+      usage, grain (activity_date, organization_id). Both sources are
+      pre-aggregated to that exact grain before a full outer join, so the
+      join itself cannot multiply either metric. Only contains dates with
+      observed activity - it is not a dense calendar; a missing row means
+      "not observed," not "zero," and is distinct from an organization not
+      existing at all (see model-level description in the SQL file).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - activity_date
+              - organization_id
+    columns:
+      - name: activity_date
+        description: Calendar date.
+        data_tests:
+          - not_null
+      - name: organization_id
+        description: The organization. Never NULL in this model (unattributed activity is excluded here - see int_daily_product_usage/int_api_usage_by_customer for that).
+        data_tests:
+          - not_null
+      - name: has_product_activity
+        description: True if this org/date had at least one product event.
+      - name: has_api_activity
+        description: True if this org/date had at least one API request.
+      - name: product_event_count
+        description: Sum of event_count from int_daily_product_usage for this org/date (0, not NULL, when has_product_activity is false).
+        data_tests:
+          - positive_or_zero
+      - name: api_request_count
+        description: request_count from int_api_usage_by_customer for this org/date (0, not NULL, when has_api_activity is false).
+        data_tests:
+          - positive_or_zero
+      - name: first_observed_activity_date
+        description: Earliest activity_date observed for this organization across the whole model, via a window function (not a separate join).
+      - name: last_observed_activity_date
+        description: Latest activity_date observed for this organization across the whole model.
+
+  - name: int_conversion_funnel
+    description: >
+      One row per user - signup, trial-start, and paid-conversion
+      milestones, plus durations and ordering quality flags. Does NOT
+      classify a user as converted/not-converted; that decision belongs to
+      Phase 5's conversion-rate mart. paid_conversion_at is the earliest
+      started_at among the user's subscriptions with a real
+      (non-missing, non-free) plan_name - a historical event, independent
+      of that subscription's current status.
+    columns:
+      - name: user_id
+        description: Technical primary key.
+        data_tests:
+          - not_null
+          - unique
+      - name: signup_at
+        description: Passthrough from stg_app__users.
+      - name: trial_start_at
+        description: Earliest trial_started_at across this user's subscriptions; NULL if none had a trial.
+      - name: paid_conversion_at
+        description: Earliest started_at among subscriptions with a real paid plan; NULL if the user never had one.
+      - name: is_trial_before_signup
+        description: Quality flag - should never be true given how the data is generated; see the paired singular test.
+      - name: is_paid_conversion_before_signup
+        description: Quality flag - should never be true given how the data is generated.
+      - name: is_paid_conversion_before_trial_start
+        description: >
+          Quality flag for a LEGITIMATE scenario (not an error): a user
+          with multiple subscriptions can have a non-trial paid plan that
+          started before a different subscription's trial. Not tested as
+          an invariant violation.
+      - name: days_signup_to_trial
+        description: NULL when either endpoint is missing - never treated as zero or as a failure.
+      - name: days_trial_to_paid
+        description: NULL when either endpoint is missing.
+      - name: days_signup_to_paid
+        description: NULL when either endpoint is missing.
+
+  - name: int_customer_lifecycle
+    description: >
+      One row per user (see docs/dbt_intermediate.md for why this model's
+      grain is the user, not the organization). Reuses int_conversion_funnel
+      for signup/trial/paid milestones; adds first cancellation and the
+      user's most-recent subscription status. lifecycle_stage is a snapshot
+      of today's state (most recent subscription's status, or
+      'no_subscription'), not a reconstructed historical journey.
+    columns:
+      - name: user_id
+        description: Technical primary key.
+        data_tests:
+          - not_null
+          - unique
+      - name: first_signup_at
+        description: From int_conversion_funnel.signup_at.
+      - name: first_trial_started_at
+        description: From int_conversion_funnel.trial_start_at.
+      - name: first_paid_started_at
+        description: From int_conversion_funnel.paid_conversion_at.
+      - name: first_cancelled_at
+        description: Earliest cancelled_at across the user's subscriptions; NULL if none were ever cancelled.
+      - name: most_recent_subscription_status
+        description: Status of the subscription with the latest updated_at (ties broken by subscription_id); NULL if the user has no subscriptions.
+      - name: lifecycle_stage
+        description: "most_recent_subscription_status, or 'no_subscription' if the user has none."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["trialing", "active", "canceled", "past_due", "unknown", "no_subscription"]

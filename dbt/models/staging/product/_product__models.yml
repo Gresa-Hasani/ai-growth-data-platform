@@ -1,0 +1,45 @@
+version: 2
+
+models:
+  - name: stg_product__events
+    description: >
+      One row per product event, deduplicated and standardized from
+      raw.product_events. Grain: one row per event_id. Events are
+      immutable, so dedup keeps the latest _ingested_at delivery rather
+      than an updated_at (there isn't one). event_timestamp is preserved
+      exactly as generated, including out-of-order arrivals - it is never
+      reordered to match ingestion.
+    columns:
+      - name: event_id
+        description: Technical primary key. One row per event_id after deduplication.
+        data_tests:
+          - not_null
+          - unique
+      - name: user_id
+        description: The user who triggered this event.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_app__users')
+                field: user_id
+              config:
+                severity: warn
+                where: "user_id is not null"
+      - name: organization_id
+        description: The organization this event belongs to.
+      - name: event_name
+        description: Normalized (lowercased) event type.
+      - name: event_timestamp
+        description: Safely cast event-time timestamp - the event's own clock, not when it was ingested.
+      - name: is_event_timestamp_missing
+        description: True if event_timestamp could not be parsed. In practice this should be rare - Phase 2 ingestion already rejects events with no parseable timestamp.
+      - name: session_id
+        description: Client-generated session identifier, unmodified.
+      - name: properties
+        description: Event-specific payload as native jsonb, preserved unflattened.
+      - name: _ingested_at
+        description: Ingestion metadata (processing time), preserved from raw for lineage/auditability and for reasoning about event-time vs. processing-time gaps.
+      - name: _source_file
+        description: Ingestion metadata, preserved from raw for lineage/auditability.
+      - name: _run_id
+        description: Ingestion metadata, preserved from raw for lineage/auditability.

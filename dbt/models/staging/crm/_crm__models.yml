@@ -1,0 +1,56 @@
+version: 2
+
+models:
+  - name: stg_crm__accounts
+    description: >
+      One row per CRM account touch, deduplicated and standardized from
+      raw.crm_accounts. Grain: one row per crm_account_id (NOT one row per
+      organization - an organization may have several lifecycle touches).
+      Orphaned organization_id references are preserved, not dropped, so
+      downstream models can decide how to handle them.
+    columns:
+      - name: crm_account_id
+        description: Technical primary key. One row per crm_account_id after deduplication.
+        data_tests:
+          - not_null
+          - unique
+      - name: organization_id
+        description: The organization this CRM touch belongs to.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_app__organizations')
+                field: organization_id
+              config:
+                severity: warn
+                where: "organization_id is not null"
+      - name: account_status
+        description: "Normalized status: prospect, active, at_risk, churned, or unknown."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["prospect", "active", "at_risk", "churned", "unknown"]
+      - name: is_account_status_unknown
+        description: True if the source account_status value didn't match a known status.
+      - name: segment
+        description: "Normalized segment: smb, mid_market, enterprise, or unknown."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["smb", "mid_market", "enterprise", "unknown"]
+      - name: owner_team
+        description: Normalized (lowercased) internal team owning this account relationship.
+      - name: lead_source
+        description: Normalized (lowercased) lead source, or NULL if the source didn't provide one.
+      - name: is_lead_source_missing
+        description: True when the source delivered no lead_source.
+      - name: created_at
+        description: Safely cast creation timestamp.
+      - name: updated_at
+        description: Safely cast last-modified timestamp; also the dedup tiebreaker field.
+      - name: _ingested_at
+        description: Ingestion metadata, preserved from raw for lineage/auditability.
+      - name: _source_file
+        description: Ingestion metadata, preserved from raw for lineage/auditability.
+      - name: _run_id
+        description: Ingestion metadata, preserved from raw for lineage/auditability.

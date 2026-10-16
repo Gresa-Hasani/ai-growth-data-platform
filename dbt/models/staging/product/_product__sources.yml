@@ -1,0 +1,51 @@
+version: 2
+
+sources:
+  - name: product
+    description: >
+      Simulated product analytics stream: user-generated product events
+      (voice generation, agent creation, feature usage, ...). Ingested by
+      the Phase 2 Python pipeline into the raw schema.
+    database: "{{ target.dbname }}"
+    schema: raw
+    loader: python (ingestion.pipeline)
+    loaded_at_field: _ingested_at
+
+    freshness:
+      warn_after: {count: 24, period: hour}
+      error_after: {count: 48, period: hour}
+
+    tables:
+      - name: product_events
+        description: >
+          Raw product usage events - one row per event_id. Intentionally
+          includes late-arriving and out-of-order events (event_timestamp
+          does not necessarily match ingestion/file order) and occasional
+          duplicate event_id deliveries. Cleaned in stg_product__events.
+        columns:
+          - name: event_id
+            description: Source system's event identifier. Technical primary key.
+            data_tests:
+              - not_null
+              - unique
+          - name: user_id
+            description: The user who triggered this event. May reference a user_id that does not exist - Phase 2 intentionally injects a low rate of orphaned FKs.
+          - name: organization_id
+            description: The organization this event belongs to.
+          - name: event_name
+            description: "Event type as delivered by the source (e.g. voice_generated, agent_created, feature_used)."
+          - name: event_timestamp
+            description: >
+              ISO-8601 timestamp string of when the event actually occurred
+              (business/event time) - distinct from _ingested_at (processing
+              time). Not guaranteed to be in file/ingestion order.
+          - name: session_id
+            description: Client-generated session identifier the event was part of.
+          - name: properties
+            description: Event-specific payload, stored as native jsonb. Structure varies by event_name.
+          - name: _ingested_at
+            description: When the Phase 2 ingestion pipeline last wrote/updated this row (processing time, not event time).
+          - name: _source_file
+            description: The source file this row was loaded from (product_events.jsonl).
+          - name: _run_id
+            description: The monitoring.ingestion_runs.run_id that wrote/last touched this row.

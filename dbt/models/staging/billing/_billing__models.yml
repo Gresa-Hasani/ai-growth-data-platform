@@ -1,0 +1,155 @@
+version: 2
+
+models:
+  - name: stg_billing__subscriptions
+    description: >
+      One row per subscription, deduplicated and standardized from
+      raw.subscriptions. Grain: one row per subscription_id. A missing
+      plan_name is preserved as NULL (never invented as a real plan) with
+      is_plan_missing surfacing the fact. Deduplicates by latest updated_at.
+    data_tests:
+      - valid_timestamp_order:
+          arguments:
+            start_column: trial_started_at
+            end_column: trial_ended_at
+          config:
+            severity: error
+      - valid_timestamp_order:
+          arguments:
+            start_column: started_at
+            end_column: cancelled_at
+          config:
+            severity: error
+    columns:
+      - name: subscription_id
+        description: Technical primary key. One row per subscription_id after deduplication.
+        data_tests:
+          - not_null
+          - unique
+      - name: user_id
+        description: The user this subscription belongs to.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_app__users')
+                field: user_id
+              config:
+                severity: warn
+                where: "user_id is not null"
+      - name: organization_id
+        description: The organization this subscription belongs to.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_app__organizations')
+                field: organization_id
+              config:
+                severity: warn
+                where: "organization_id is not null"
+      - name: plan_name
+        description: "Plan tier, lowercased (free, starter, creator, pro, business, enterprise), or NULL if the source didn't provide one - see is_plan_missing."
+      - name: is_plan_missing
+        description: True when the source delivered no plan_name. Downstream models must handle this explicitly rather than assuming a default plan.
+      - name: billing_interval
+        description: Billing cadence, lowercased (monthly, annual).
+      - name: status
+        description: "Normalized status: trialing, active, canceled, past_due, or unknown."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["trialing", "active", "canceled", "past_due", "unknown"]
+      - name: is_status_unknown
+        description: True if the source status value didn't match a known status.
+      - name: currency
+        description: Normalized (trimmed, uppercased) currency code.
+        data_tests:
+          - valid_currency_code
+      - name: is_currency_recognized
+        description: True if currency is in this environment's known-good set (USD, EUR, GBP).
+      - name: subscription_amount
+        description: Safely cast numeric amount; NULL if the source value could not be parsed as a number.
+        data_tests:
+          - positive_or_zero
+      - name: started_at
+        description: Safely cast subscription start timestamp.
+      - name: trial_started_at
+        description: Safely cast trial start timestamp, if this subscription had a trial.
+      - name: trial_ended_at
+        description: Safely cast trial end timestamp, if this subscription had a trial.
+      - name: cancelled_at
+        description: Safely cast cancellation timestamp, if cancelled.
+      - name: current_period_start
+        description: Safely cast current billing period start.
+      - name: current_period_end
+        description: Safely cast current billing period end.
+      - name: updated_at
+        description: Safely cast source-system last-modified timestamp; also the dedup tiebreaker field.
+      - name: _ingested_at
+        description: Ingestion metadata, preserved from raw for lineage/auditability.
+      - name: _source_file
+        description: Ingestion metadata, preserved from raw for lineage/auditability.
+      - name: _run_id
+        description: Ingestion metadata, preserved from raw for lineage/auditability.
+
+  - name: stg_billing__invoices
+    description: >
+      One row per invoice, deduplicated and standardized from
+      raw.invoices. Grain: one row per invoice_id. No updated_at exists on
+      this source (invoices are near-immutable once issued), so dedup falls
+      back to latest _ingested_at.
+    columns:
+      - name: invoice_id
+        description: Technical primary key. One row per invoice_id after deduplication.
+        data_tests:
+          - not_null
+          - unique
+      - name: subscription_id
+        description: The subscription this invoice was generated against.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_billing__subscriptions')
+                field: subscription_id
+              config:
+                severity: warn
+                where: "subscription_id is not null"
+      - name: customer_id
+        description: The organization_id (or user_id, for individual accounts) billed on this invoice.
+      - name: currency
+        description: Normalized (trimmed, uppercased) currency code.
+        data_tests:
+          - valid_currency_code
+      - name: is_currency_recognized
+        description: True if currency is in this environment's known-good set.
+      - name: subtotal_amount
+        description: Safely cast pre-tax amount.
+        data_tests:
+          - positive_or_zero
+      - name: tax_amount
+        description: Safely cast tax amount.
+        data_tests:
+          - positive_or_zero
+      - name: total_amount
+        description: Safely cast total (subtotal + tax) amount.
+        data_tests:
+          - positive_or_zero
+      - name: status
+        description: "Normalized status: paid, open, failed, void, or unknown."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["paid", "open", "failed", "void", "unknown"]
+      - name: is_status_unknown
+        description: True if the source status value didn't match a known status.
+      - name: is_paid_without_paid_at
+        description: True when status is 'paid' but paid_at is NULL - a source-quality observation surfaced, not corrected.
+      - name: issued_at
+        description: Safely cast issuance timestamp.
+      - name: paid_at
+        description: Safely cast payment timestamp, if paid.
+      - name: _ingested_at
+        description: Ingestion metadata, preserved from raw for lineage/auditability.
+      - name: _source_file
+        description: Ingestion metadata, preserved from raw for lineage/auditability.
+      - name: _run_id
+        description: Ingestion metadata, preserved from raw for lineage/auditability.

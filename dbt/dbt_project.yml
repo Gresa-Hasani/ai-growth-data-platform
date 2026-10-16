@@ -15,14 +15,35 @@ clean-targets:
   - "target"
   - "dbt_packages"
 
+vars:
+  # Source freshness / staleness thresholds are expressed in hours against
+  # each source table's own config (see models/staging/*/_*__sources.yml).
+  # Kept here only as documentation of the policy, not consumed directly.
+  staging_freshness_warn_after_hours: 24
+  staging_freshness_error_after_hours: 48
+
 models:
   growth_platform:
     staging:
       +schema: staging
       +materialized: view
+      +tags: ["staging"]
+      app:
+        +tags: ["app"]
+      billing:
+        +tags: ["billing"]
+      product:
+        +tags: ["product"]
+      api:
+        +tags: ["api"]
+      crm:
+        +tags: ["crm"]
+      marketing:
+        +tags: ["marketing"]
     intermediate:
       +schema: intermediate
       +materialized: view
+      +tags: ["intermediate"]
     marts:
       +schema: analytics
       +materialized: table

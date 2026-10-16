@@ -1,0 +1,55 @@
+version: 2
+
+sources:
+  - name: marketing
+    description: >
+      Simulated marketing attribution platform: campaign touchpoints across
+      paid, organic, and content channels, for both known users and
+      anonymous visitors. Ingested by the Phase 2 Python pipeline into the
+      raw schema.
+    database: "{{ target.dbname }}"
+    schema: raw
+    loader: python (ingestion.pipeline)
+    loaded_at_field: _ingested_at
+
+    freshness:
+      warn_after: {count: 24, period: hour}
+      error_after: {count: 48, period: hour}
+
+    tables:
+      - name: marketing_events
+        description: >
+          Raw marketing touchpoint records - one row per
+          marketing_event_id. Intentionally includes a missing campaign_id
+          for ~15% of rows (a very common real-world attribution gap).
+          Cleaned in stg_marketing__events.
+        columns:
+          - name: marketing_event_id
+            description: Source system's event identifier. Technical primary key.
+            data_tests:
+              - not_null
+              - unique
+          - name: user_id
+            description: The known user this touchpoint belongs to, if identified. NULL for anonymous (pre-signup) touches - use anonymous_id instead.
+          - name: anonymous_id
+            description: Client-generated anonymous visitor identifier, present on every row regardless of whether user_id is known.
+          - name: campaign_id
+            description: Campaign identifier, intentionally NULL for ~15% of rows (unattributed traffic).
+          - name: channel
+            description: "Marketing channel as delivered by the source (e.g. google_ads, organic_search, email)."
+          - name: event_type
+            description: "Touchpoint type as delivered by the source: impression, click, signup_start, signup_complete."
+          - name: event_timestamp
+            description: ISO-8601 timestamp string of when the touchpoint occurred.
+          - name: utm_source
+            description: UTM source parameter as delivered by the source.
+          - name: utm_medium
+            description: UTM medium parameter as delivered by the source.
+          - name: utm_campaign
+            description: UTM campaign parameter as delivered by the source; NULL alongside a missing campaign_id.
+          - name: _ingested_at
+            description: When the Phase 2 ingestion pipeline last wrote/updated this row.
+          - name: _source_file
+            description: The source file this row was loaded from (marketing_events.csv).
+          - name: _run_id
+            description: The monitoring.ingestion_runs.run_id that wrote/last touched this row.

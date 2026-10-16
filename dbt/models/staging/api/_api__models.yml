@@ -1,0 +1,66 @@
+version: 2
+
+models:
+  - name: stg_api__usage
+    description: >
+      One row per API request, deduplicated and standardized from
+      raw.api_usage. Grain: one row per request_id. Numeric fields are
+      safely cast - a value that fails to parse becomes NULL, not zero.
+    columns:
+      - name: request_id
+        description: Technical primary key. One row per request_id after deduplication.
+        data_tests:
+          - not_null
+          - unique
+      - name: user_id
+        description: The user who made this API request.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_app__users')
+                field: user_id
+              config:
+                severity: warn
+                where: "user_id is not null"
+      - name: organization_id
+        description: The organization this request is billed against.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_app__organizations')
+                field: organization_id
+              config:
+                severity: warn
+                where: "organization_id is not null"
+      - name: endpoint
+        description: Normalized (lowercased) API endpoint path.
+      - name: model_family
+        description: Normalized (lowercased) model family used to serve the request.
+      - name: request_timestamp
+        description: Safely cast request timestamp.
+      - name: latency_ms
+        description: Safely cast request latency in milliseconds.
+        data_tests:
+          - positive_or_zero
+      - name: input_units
+        description: Safely cast input usage units.
+        data_tests:
+          - positive_or_zero
+      - name: output_units
+        description: Safely cast output usage units.
+        data_tests:
+          - positive_or_zero
+      - name: status_code
+        description: Safely cast HTTP status code.
+      - name: is_successful_request
+        description: True when status_code is in the 200-299 range. A straightforward source-level derivation, not a reliability KPI.
+      - name: estimated_cost
+        description: Safely cast estimated request cost in USD.
+        data_tests:
+          - positive_or_zero
+      - name: _ingested_at
+        description: Ingestion metadata, preserved from raw for lineage/auditability.
+      - name: _source_file
+        description: Ingestion metadata, preserved from raw for lineage/auditability.
+      - name: _run_id
+        description: Ingestion metadata, preserved from raw for lineage/auditability.

@@ -1,0 +1,101 @@
+version: 2
+
+sources:
+  - name: billing
+    description: >
+      Simulated billing platform (Stripe-like): subscriptions and the
+      invoices generated against them. Ingested by the Phase 2 Python
+      pipeline into the raw schema.
+    database: "{{ target.dbname }}"
+    schema: raw
+    loader: python (ingestion.pipeline)
+    loaded_at_field: _ingested_at
+
+    freshness:
+      warn_after: {count: 24, period: hour}
+      error_after: {count: 48, period: hour}
+
+    tables:
+      - name: subscriptions
+        description: >
+          Raw subscription records - one row per subscription_id.
+          Intentionally includes null plan names, mixed-case currency
+          codes, and an injected UNKNOWN_STATUS value at a low rate.
+          Cleaned in stg_billing__subscriptions.
+        columns:
+          - name: subscription_id
+            description: Source system's subscription identifier. Technical primary key.
+            data_tests:
+              - not_null
+              - unique
+          - name: user_id
+            description: The user this subscription belongs to.
+          - name: organization_id
+            description: The organization this subscription belongs to.
+          - name: plan_name
+            description: "Plan tier as delivered by the source (free, starter, creator, pro, business, enterprise); intentionally NULL for ~2% of rows."
+          - name: billing_interval
+            description: Billing cadence as delivered by the source (monthly, annual).
+          - name: status
+            description: "Subscription status as delivered by the source: trialing, active, canceled, past_due, plus a low rate of an injected invalid value."
+          - name: currency
+            description: 'Currency code as delivered by the source, intentionally inconsistent casing for a subset of rows (e.g. "usd" vs "USD").'
+          - name: amount
+            description: Subscription amount as a raw text value (not yet cast to numeric).
+          - name: started_at
+            description: ISO-8601 timestamp string of when the subscription started.
+          - name: trial_started_at
+            description: ISO-8601 timestamp string of trial start, if this subscription had a trial.
+          - name: trial_ended_at
+            description: ISO-8601 timestamp string of trial end, if this subscription had a trial.
+          - name: cancelled_at
+            description: ISO-8601 timestamp string of cancellation, if cancelled.
+          - name: current_period_start
+            description: ISO-8601 timestamp string of the current billing period's start.
+          - name: current_period_end
+            description: ISO-8601 timestamp string of the current billing period's end.
+          - name: updated_at
+            description: ISO-8601 timestamp string; source-system last-modified time. Used to resolve duplicate subscription_id deliveries.
+          - name: _ingested_at
+            description: When the Phase 2 ingestion pipeline last wrote/updated this row.
+          - name: _source_file
+            description: The source file this row was loaded from (subscriptions.csv).
+          - name: _run_id
+            description: The monitoring.ingestion_runs.run_id that wrote/last touched this row.
+
+      - name: invoices
+        description: >
+          Raw invoice records - one row per invoice_id, generated against a
+          subscription. Intentionally includes mixed-case currency codes and
+          occasional duplicate invoice_id deliveries. Cleaned in
+          stg_billing__invoices.
+        columns:
+          - name: invoice_id
+            description: Source system's invoice identifier. Technical primary key.
+            data_tests:
+              - not_null
+              - unique
+          - name: subscription_id
+            description: The subscription this invoice was generated against. May reference a subscription_id that does not exist - Phase 2 intentionally injects a low rate of orphaned FKs.
+          - name: customer_id
+            description: The organization_id (or user_id, for individual accounts) billed on this invoice.
+          - name: currency
+            description: Currency code as delivered by the source, intentionally inconsistent casing for a subset of rows.
+          - name: subtotal
+            description: Pre-tax amount as a raw text value.
+          - name: tax
+            description: Tax amount as a raw text value.
+          - name: total
+            description: Total amount (subtotal + tax) as a raw text value.
+          - name: status
+            description: "Invoice status as delivered by the source: paid, open, failed, void."
+          - name: issued_at
+            description: ISO-8601 timestamp string of when the invoice was issued.
+          - name: paid_at
+            description: ISO-8601 timestamp string of when the invoice was paid, if paid.
+          - name: _ingested_at
+            description: When the Phase 2 ingestion pipeline last wrote/updated this row.
+          - name: _source_file
+            description: The source file this row was loaded from (invoices.csv).
+          - name: _run_id
+            description: The monitoring.ingestion_runs.run_id that wrote/last touched this row.

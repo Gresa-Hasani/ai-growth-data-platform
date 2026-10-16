@@ -1,0 +1,54 @@
+version: 2
+
+sources:
+  - name: api
+    description: >
+      Simulated API gateway usage logs: per-request metering for the AI
+      SaaS's public API (text-to-speech, conversational agents, ...).
+      Ingested by the Phase 2 Python pipeline into the raw schema.
+    database: "{{ target.dbname }}"
+    schema: raw
+    loader: python (ingestion.pipeline)
+    loaded_at_field: _ingested_at
+
+    freshness:
+      warn_after: {count: 24, period: hour}
+      error_after: {count: 48, period: hour}
+
+    tables:
+      - name: api_usage
+        description: >
+          Raw API request records - one row per request_id. Cleaned in
+          stg_api__usage.
+        columns:
+          - name: request_id
+            description: Source system's request identifier. Technical primary key.
+            data_tests:
+              - not_null
+              - unique
+          - name: user_id
+            description: The user who made this API request. May reference a user_id that does not exist - Phase 2 intentionally injects a low rate of orphaned FKs.
+          - name: organization_id
+            description: The organization this request is billed against.
+          - name: endpoint
+            description: API endpoint path called (e.g. /v1/text-to-speech).
+          - name: model_family
+            description: Model family used to serve the request (e.g. tts-standard, conversational-v2).
+          - name: request_timestamp
+            description: ISO-8601 timestamp string of when the request was made.
+          - name: latency_ms
+            description: Request latency in milliseconds, as a raw text value.
+          - name: input_units
+            description: Input usage units consumed (e.g. characters/tokens), as a raw text value.
+          - name: output_units
+            description: Output usage units produced, as a raw text value.
+          - name: status_code
+            description: HTTP status code returned, as a raw text value.
+          - name: estimated_cost
+            description: Estimated cost of this request in USD, as a raw text value.
+          - name: _ingested_at
+            description: When the Phase 2 ingestion pipeline last wrote/updated this row.
+          - name: _source_file
+            description: The source file this row was loaded from (api_usage.parquet).
+          - name: _run_id
+            description: The monitoring.ingestion_runs.run_id that wrote/last touched this row.

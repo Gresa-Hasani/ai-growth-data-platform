@@ -1,0 +1,55 @@
+version: 2
+
+models:
+  - name: stg_marketing__events
+    description: >
+      One row per marketing touchpoint, deduplicated and standardized from
+      raw.marketing_events. Grain: one row per marketing_event_id. Not
+      every event has a known user - anonymous_id is the only identity for
+      pre-signup touches, which is expected, not a quality problem.
+    columns:
+      - name: marketing_event_id
+        description: Technical primary key. One row per marketing_event_id after deduplication.
+        data_tests:
+          - not_null
+          - unique
+      - name: user_id
+        description: The known user this touchpoint belongs to, if identified.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_app__users')
+                field: user_id
+              config:
+                severity: warn
+                where: "user_id is not null"
+      - name: anonymous_id
+        description: Client-generated anonymous visitor identifier, unmodified.
+      - name: campaign_id
+        description: Campaign identifier, or NULL if unattributed - see is_campaign_attributed.
+      - name: is_campaign_attributed
+        description: >
+          True when campaign_id is present. A staging-level availability
+          flag only, NOT a multi-touch attribution model.
+      - name: channel
+        description: Normalized (lowercased) marketing channel.
+      - name: event_type
+        description: "Normalized (lowercased) touchpoint type: impression, click, signup_start, signup_complete."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["impression", "click", "signup_start", "signup_complete"]
+      - name: event_timestamp
+        description: Safely cast touchpoint timestamp.
+      - name: utm_source
+        description: Normalized (lowercased) UTM source parameter.
+      - name: utm_medium
+        description: Normalized (lowercased) UTM medium parameter.
+      - name: utm_campaign
+        description: UTM campaign parameter, or NULL if unattributed.
+      - name: _ingested_at
+        description: Ingestion metadata, preserved from raw for lineage/auditability.
+      - name: _source_file
+        description: Ingestion metadata, preserved from raw for lineage/auditability.
+      - name: _run_id
+        description: Ingestion metadata, preserved from raw for lineage/auditability.

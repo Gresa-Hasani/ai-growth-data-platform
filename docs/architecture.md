@@ -107,8 +107,10 @@ flowchart TD
 
 Keeping every layer in one PostgreSQL database, separated by schema, keeps dbt `ref()`/`source()`
 resolution simple, avoids cross-database query limitations, and mirrors how most production dbt
-warehouses on a single Postgres/Redshift/Snowflake instance are organized. `generate_schema_name`
-(added in Phase 6) controls the exact schema each model lands in.
+warehouses on a single Postgres/Redshift/Snowflake instance are organized. `dbt/macros/generate_schema_name.sql`
+(added in Phase 3) overrides dbt's default `<target_schema>_<custom_schema>` naming so a model
+tagged `+schema: staging` lands in the literal `staging` schema Phase 1 provisioned, not
+`analytics_staging`.
 
 ## Why the AI agent never gets raw database credentials
 
@@ -128,12 +130,61 @@ curl http://localhost:8000/health
 `postgres` and `analytics-api` both expose Docker healthchecks; `docker compose up -d` will not
 report the stack healthy until Postgres is accepting connections and `/health` returns 200.
 
-## What's implemented so far (Phase 1)
+## What's implemented so far
 
-- Repository and Docker skeleton
-- PostgreSQL schema bootstrap (`raw`, `staging`, `intermediate`, `analytics`, `monitoring`)
-- FastAPI service with a DB-backed `/health` check
-- Empty dbt project shell configured for the staging/intermediate/marts schema layout
+**Phase 1** - Repository and Docker skeleton; PostgreSQL schema bootstrap (`raw`, `staging`,
+`intermediate`, `analytics`, `monitoring`); FastAPI service with a DB-backed `/health` check; empty
+dbt project shell.
 
-Everything else in the diagram above (ingestion, dbt models, marts, the API's business endpoints,
-and the AI agent) is built out in later phases per the project plan.
+**Phase 2** - Deterministic synthetic data generation (`scripts/generate_data.py`) for 8 source
+files with realistic business correlations and intentionally injected quality issues; a reusable
+Python ingestion framework (`ingestion/`) that loads them into `raw.*` idempotently, with full audit
+(`monitoring.ingestion_runs`) and rejection tracking (`monitoring.rejected_records`). See
+[ingestion.md](ingestion.md).
+
+**Phase 3** - A full dbt staging layer: `raw.*` -> `dbt source()` (with freshness checks against
+`_ingested_at`) -> `stg_<domain>__<entity>` views in the `staging` schema. Standardizes email,
+country code, currency, and categorical values; deterministic deduplication by business key; safe
+numeric/timestamp casting (`NULL` on parse failure, never `0`); WARN-vs-ERROR test severity policy
+that treats Phase 2's intentional orphaned-FK/messy-value injections as expected observations rather
+than build-breaking failures. See [dbt_staging.md](dbt_staging.md) and [data_dictionary.md](data_dictionary.md).
+
+**Phase 4** - A dbt intermediate layer: `stg_*` views -> 9 `int_*` models in the `intermediate`
+schema, establishing reusable business entities (subscription history, acquisition attribution,
+revenue facts, daily product/API usage, subscription-milestone timelines, customer activity,
+conversion-funnel milestones, customer lifecycle) with explicit, verified join-cardinality
+guarantees (no row multiplication) and a documented user-vs-organization "customer identity"
+convention. Still no final KPIs (MRR, churn, conversion rate) - those are Phase 5. See
+[dbt_intermediate.md](dbt_intermediate.md) and [data_dictionary.md](data_dictionary.md).
+
+## Pipeline flow (updated)
+
+```
+Source files (Phase 2)
+        |
+        v
+Python ingestion (Phase 2)
+        |
+        v
+raw.* (PostgreSQL)
+        |
+        v
+dbt sources + freshness (Phase 3)
+        |
+        v
+dbt staging: stg_<domain>__<entity> (Phase 3)
+        |
+        v
+dbt intermediate: int_<entity> (Phase 4) <-- you are here
+        |
+        v
+dbt marts / analytics (Phase 5+ - not yet implemented)
+```
+
+Raw ingestion (Python, Phase 2) and analytical transformation (dbt, Phase 3+) are deliberately
+separate concerns: ingestion's job is "land the source data faithfully, however messy"; dbt's job
+starts at `staging` and is "make it trustworthy." Nothing upstream of `raw.*` is ever modified to
+make a dbt model easier to write.
+
+Everything else in the diagram above the "you are here" marker (marts, the API's business
+endpoints, and the AI agent) is built out in later phases per the project plan.

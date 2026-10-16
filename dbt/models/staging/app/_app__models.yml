@@ -1,0 +1,102 @@
+version: 2
+
+models:
+  - name: stg_app__users
+    description: >
+      One row per user, deduplicated and standardized from raw.users. Grain:
+      one row per user_id. Email is normalized (trimmed, lowercased) but
+      never rewritten beyond that - is_email_valid exposes structural
+      validity instead of silently discarding bad rows. Country codes are
+      mapped to canonical ISO2 where recognized. Duplicate user_id
+      deliveries are resolved by latest updated_at, then latest
+      _ingested_at (see the deduplicate() macro).
+    columns:
+      - name: user_id
+        description: Technical primary key. One row per user_id after deduplication.
+        data_tests:
+          - not_null
+          - unique
+      - name: organization_id
+        description: The organization this user belongs to. Not all values resolve to a real organization (see relationship test, WARN severity - Phase 2 intentionally injects orphaned FKs).
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('stg_app__organizations')
+                field: organization_id
+              config:
+                severity: warn
+                where: "organization_id is not null"
+      - name: email
+        description: Trimmed, lowercased email address.
+      - name: is_email_valid
+        description: >
+          Structural validation only (has "@", a domain with a dot, no
+          embedded whitespace) - does NOT prove deliverability.
+        data_tests:
+          - not_null
+      - name: country_code
+        description: Normalized ISO2-style country code where a known messy variant was recognized; otherwise a trimmed/uppercased passthrough of the source value.
+      - name: is_country_code_recognized
+        description: True if country_code is in this environment's known-good ISO2 set (see normalize_country_code macro), false otherwise.
+      - name: signup_at
+        description: Safely cast timestamp of signup; NULL if the source value could not be parsed.
+      - name: acquisition_channel
+        description: Marketing/growth channel attributed to this user's signup, lowercased.
+      - name: status
+        description: "Normalized lifecycle status: active, trial, or churned. Anything unrecognized becomes 'unknown' (see is_status_unknown) rather than being dropped."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["active", "trial", "churned", "unknown"]
+      - name: is_status_unknown
+        description: True if the source status value didn't match a known status.
+      - name: created_at
+        description: Safely cast source-system record creation timestamp.
+      - name: updated_at
+        description: Safely cast source-system last-modified timestamp; also the dedup tiebreaker field.
+      - name: _ingested_at
+        description: Ingestion metadata, preserved from raw for lineage/auditability.
+      - name: _source_file
+        description: Ingestion metadata, preserved from raw for lineage/auditability.
+      - name: _run_id
+        description: Ingestion metadata, preserved from raw for lineage/auditability.
+
+  - name: stg_app__organizations
+    description: >
+      One row per organization, deduplicated and standardized from
+      raw.organizations. Grain: one row per organization_id. Country codes
+      normalized the same way as stg_app__users. organization_type is
+      constrained to a known set; anything else becomes 'unknown' rather
+      than silently vanishing.
+    columns:
+      - name: organization_id
+        description: Technical primary key. One row per organization_id after deduplication.
+        data_tests:
+          - not_null
+          - unique
+      - name: organization_name
+        description: Trimmed organization display name; casing is preserved (it has presentational meaning).
+      - name: domain
+        description: Organization's primary domain, trimmed and lowercased.
+      - name: country_code
+        description: Normalized ISO2-style country code where recognized.
+      - name: is_country_code_recognized
+        description: True if country_code is in this environment's known-good ISO2 set.
+      - name: organization_type
+        description: "Normalized business segment: individual, startup, business, enterprise, or unknown."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["individual", "startup", "business", "enterprise", "unknown"]
+      - name: is_organization_type_unknown
+        description: True if the source organization_type value didn't match a known type.
+      - name: created_at
+        description: Safely cast source-system record creation timestamp.
+      - name: updated_at
+        description: Safely cast source-system last-modified timestamp; also the dedup tiebreaker field.
+      - name: _ingested_at
+        description: Ingestion metadata, preserved from raw for lineage/auditability.
+      - name: _source_file
+        description: Ingestion metadata, preserved from raw for lineage/auditability.
+      - name: _run_id
+        description: Ingestion metadata, preserved from raw for lineage/auditability.
