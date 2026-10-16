@@ -47,3 +47,11 @@ models:
     marts:
       +schema: analytics
       +materialized: table
+      dimensions:
+        +tags: ["dimensions"]
+      facts:
+        +tags: ["facts"]
+      growth:
+        +tags: ["growth"]
+      revenue:
+        +tags: ["revenue"]

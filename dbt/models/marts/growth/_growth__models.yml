@@ -1,0 +1,130 @@
+version: 2
+
+models:
+  - name: mart_daily_growth
+    description: >
+      One row per calendar date_day (dense - every date in dim_date, not
+      just dates with signups). Distinguishes new user signups from new
+      organizations.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - date_day
+    columns:
+      - name: date_day
+        data_tests:
+          - not_null
+      - name: new_user_signups
+        data_tests:
+          - positive_or_zero
+      - name: new_organizations
+        data_tests:
+          - positive_or_zero
+
+  - name: mart_trial_conversion
+    description: >
+      One row per user who started a trial - the eligible cohort. See the
+      model SQL for the exact conversion/observation-window definitions.
+      Compute rates as sum(is_converted::int) / count(*) filter (where
+      is_observation_complete) - users still within the 30-day observation
+      window are never counted as failed conversions.
+    columns:
+      - name: user_id
+        data_tests:
+          - not_null
+          - unique
+      - name: trial_start_at
+        data_tests:
+          - not_null
+
+  - name: mart_acquisition_channels
+    description: >
+      One row per (acquisition_channel, currency). signup_count/
+      trial_start_count/paid_conversion_count are channel-level and
+      intentionally repeated across each currency row for that channel -
+      do not sum them across a channel's currency rows. Revenue is
+      attributed via each invoice's subscription user_id, not via
+      organization (see model SQL for why).
+    columns:
+      - name: acquisition_channel
+        data_tests:
+          - not_null
+      - name: trial_to_paid_conversion_rate
+        data_tests:
+          - percentage_between_zero_and_one
+      - name: billed_amount
+        data_tests:
+          - positive_or_zero
+      - name: paid_amount
+        data_tests:
+          - positive_or_zero
+
+  - name: mart_retention_cohorts
+    description: >
+      One row per (cohort_month, period_index) for OBSERVABLE periods only.
+      cohort_size is the exact count of dim_users whose signup month equals
+      cohort_month (verified by a dedicated reconciliation test).
+      retained_users = 0 is an explicit, meaningful observation here, not a
+      missing-data gap - see the model SQL for why this differs from
+      int_customer_activity's sparser grain.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - cohort_month
+              - period_index
+    columns:
+      - name: cohort_month
+        data_tests:
+          - not_null
+      - name: period_index
+        data_tests:
+          - not_null
+      - name: cohort_size
+        data_tests:
+          - positive_or_zero
+      - name: retained_users
+        data_tests:
+          - positive_or_zero
+      - name: retention_rate
+        data_tests:
+          - percentage_between_zero_and_one
+
+  - name: mart_feature_adoption
+    description: >
+      One row per event_name. adopting_user_count (distinct users) is kept
+      separate from total_event_count (raw volume) specifically so a power
+      user's event volume cannot inflate the adoption rate.
+    columns:
+      - name: event_name
+        data_tests:
+          - not_null
+          - unique
+      - name: adopting_user_count
+        data_tests:
+          - positive_or_zero
+      - name: adoption_rate
+        data_tests:
+          - percentage_between_zero_and_one
+
+  - name: mart_enterprise_growth
+    description: >
+      One row per enterprise organization. current_monthly_equivalent_revenue
+      is a point-in-time figure (NOT a growth trend - no prior-period
+      revenue snapshot exists to compare against). usage_change_pct IS a
+      genuine trend (trailing 30 days vs. the preceding 30 days of real
+      product/API event timestamps). These two are never blended into a
+      single "growth score."
+    columns:
+      - name: organization_key
+        data_tests:
+          - not_null
+          - unique
+          - relationships:
+              arguments:
+                to: ref('dim_organizations')
+                field: organization_key
+      - name: current_monthly_equivalent_revenue
+        data_tests:
+          - positive_or_zero

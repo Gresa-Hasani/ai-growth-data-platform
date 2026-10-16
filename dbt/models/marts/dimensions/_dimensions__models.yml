@@ -1,0 +1,117 @@
+version: 2
+
+models:
+  - name: dim_users
+    description: >
+      One row per user. Deliberately excludes email/PII - business-facing
+      marts should never need raw email, only is_email_valid-style flags
+      that already live in staging if truly required.
+    columns:
+      - name: user_key
+        description: Stable surrogate key (dbt_utils.generate_surrogate_key on user_id).
+        data_tests:
+          - not_null
+          - unique
+      - name: user_id
+        description: Source system identifier, preserved for traceability.
+        data_tests:
+          - not_null
+          - unique
+      - name: organization_id
+        description: The user's organization (join to dim_organizations.organization_id).
+      - name: country_code
+        description: Normalized country code, from staging.
+      - name: signup_at
+        description: Safely cast signup timestamp.
+      - name: signup_date
+        description: Calendar date of signup_at - used as the cohort-entry date in mart_retention_cohorts.
+      - name: acquisition_channel
+        description: Authoritative acquisition channel (see int_user_acquisition).
+      - name: lifecycle_stage
+        description: From int_customer_lifecycle - a current-state snapshot, not a historical journey.
+
+  - name: dim_organizations
+    description: >
+      One row per organization - the billing/account entity. An
+      "individual" organization_type is still its own row here, never
+      merged with dim_users; see docs/dbt_marts.md "Customer identity" for
+      why organization (not user) is the "customer" throughout the revenue
+      marts.
+    columns:
+      - name: organization_key
+        description: Stable surrogate key (dbt_utils.generate_surrogate_key on organization_id).
+        data_tests:
+          - not_null
+          - unique
+      - name: organization_id
+        description: Source system identifier, preserved for traceability.
+        data_tests:
+          - not_null
+          - unique
+      - name: organization_type
+        description: "Normalized type: individual, startup, business, enterprise, or unknown."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["individual", "startup", "business", "enterprise", "unknown"]
+      - name: is_enterprise
+        description: True when organization_type = 'enterprise' - the classification mart_enterprise_growth filters on.
+      - name: country_code
+        description: Normalized country code, from staging.
+      - name: created_at
+        description: Safely cast organization creation timestamp.
+      - name: created_date
+        description: Calendar date of created_at - used by mart_daily_growth's new_organizations metric.
+
+  - name: dim_plans
+    description: >
+      One row per (plan_name, billing_interval) combination actually
+      observed in subscriptions - NOT one row per plan_name alone, since
+      price varies within a plan+interval in this dataset (verified
+      real-price jitter, not tiered pricing). typical_monthly_equivalent_amount
+      is an OBSERVED AVERAGE, not a price-catalog lookup - no such catalog
+      exists in this source.
+    columns:
+      - name: plan_key
+        description: Stable surrogate key (dbt_utils.generate_surrogate_key on plan_name, billing_interval).
+        data_tests:
+          - not_null
+          - unique
+      - name: plan_name
+        description: "Normalized plan name, or 'unknown' when the source subscription had no plan_name."
+      - name: billing_interval
+        description: "monthly or annual."
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ["monthly", "annual"]
+      - name: is_plan_missing
+        description: True for the synthetic 'unknown' plan row (aggregates subscriptions whose source plan_name was NULL).
+      - name: observed_subscription_count
+        description: How many subscriptions back this plan+interval combination - context for how reliable typical_monthly_equivalent_amount is.
+      - name: typical_monthly_equivalent_amount
+        description: Average observed monthly-equivalent amount for this plan+interval - a descriptive statistic, not a price list.
+
+  - name: dim_date
+    description: >
+      Deterministic date spine covering the actual min/max dates observed
+      across every business-dated source (extended to current_date), not a
+      hardcoded range and not an external calendar dependency.
+    columns:
+      - name: date_day
+        description: Calendar date. Grain.
+        data_tests:
+          - not_null
+          - unique
+      - name: year_number
+        description: Calendar year.
+      - name: quarter_number
+        description: Calendar quarter (1-4).
+      - name: month_number
+        description: Calendar month (1-12).
+      - name: month_start_date
+        description: First day of date_day's month - the grouping key used by mart_api_usage's monthly rollup.
+      - name: month_label
+        description: "'YYYY-MM' formatted month label."
+      - name: is_weekend
+        description: True for Saturday/Sunday (ISO day-of-week 6 or 7).

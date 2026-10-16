@@ -1,0 +1,172 @@
+version: 2
+
+models:
+  - name: mart_mrr
+    description: >
+      One row per currency, as of a SINGLE as_of_date snapshot (today) -
+      NOT a historical monthly time series (see model SQL header for why
+      that cannot be reliably reconstructed from this source). Active-
+      recurring-subscription definition: is_subscription_recurring_active.
+      Currency is never mixed.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - as_of_date
+              - currency
+    columns:
+      - name: currency
+        data_tests:
+          - not_null
+      - name: mrr
+        data_tests:
+          - positive_or_zero
+
+  - name: mart_arr
+    description: >
+      One row per currency, same snapshot semantics as mart_mrr. arr = mrr
+      * 12 for the identical eligible-subscription set (verified by a
+      dedicated consistency test against mart_mrr) - never derived from
+      annual invoice totals.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - as_of_date
+              - currency
+    columns:
+      - name: currency
+        data_tests:
+          - not_null
+      - name: arr
+        data_tests:
+          - positive_or_zero
+
+  - name: mart_customer_churn
+    description: >
+      One row per organization_type (plus one 'all' row), for a single
+      fixed trailing-30-day period. Customer = organization. An
+      organization with multiple active subscriptions only counts as
+      churned if NONE remain active at period_end - see model SQL for the
+      full definition using genuinely historical started_at/cancelled_at
+      fields (not current `status` alone).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - period_start
+              - period_end
+              - organization_type
+    columns:
+      - name: period_start
+        data_tests:
+          - not_null
+      - name: period_end
+        data_tests:
+          - not_null
+      - name: customers_active_at_start
+        data_tests:
+          - positive_or_zero
+      - name: customers_churned
+        data_tests:
+          - positive_or_zero
+      - name: churn_rate
+        data_tests:
+          - percentage_between_zero_and_one
+
+  - name: mart_revenue_churn
+    description: >
+      One row per currency, same fixed trailing-30-day period as
+      mart_customer_churn. GROSS revenue churn only - net revenue churn
+      (which would require detecting expansion/contraction) is explicitly
+      NOT implemented, since this source has no historical subscription-
+      amount data to detect a price change against (see model SQL).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - period_start
+              - period_end
+              - currency
+    columns:
+      - name: currency
+        data_tests:
+          - not_null
+      - name: opening_recurring_revenue
+        data_tests:
+          - positive_or_zero
+      - name: churned_recurring_revenue
+        data_tests:
+          - positive_or_zero
+      - name: gross_revenue_churn_rate
+        data_tests:
+          - percentage_between_zero_and_one
+
+  - name: mart_customer_ltv
+    description: >
+      One row per (organization_key, currency). realized_ltv_to_date is
+      observed historical revenue (a fact); estimated_ltv is a speculative
+      ARPU/churn-rate projection (platform-wide churn rate, not org-
+      specific) - the two are never blended into one column. NULL, not a
+      divide-by-zero error, when churn_rate is zero or unavailable.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - organization_key
+              - currency
+    columns:
+      - name: organization_key
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_organizations')
+                field: organization_key
+      - name: realized_ltv_to_date
+        data_tests:
+          - positive_or_zero
+
+  - name: mart_arpu
+    description: >
+      One row per currency, same snapshot semantics as mart_mrr. ARPU is
+      per PAYING ORGANIZATION (not per user), using current MRR as the
+      numerator - never confused with average invoice value.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - as_of_date
+              - currency
+    columns:
+      - name: currency
+        data_tests:
+          - not_null
+      - name: paying_organization_count
+        data_tests:
+          - positive_or_zero
+      - name: arpu
+        data_tests:
+          - positive_or_zero
+
+  - name: mart_api_usage
+    description: >
+      One row per (month_start_date, organization_key) - a monthly rollup
+      of fact_api_usage's daily grain (pure re-aggregation; cannot
+      double-count since each day belongs to exactly one month).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - month_start_date
+              - organization_key
+    columns:
+      - name: month_start_date
+        data_tests:
+          - not_null
+      - name: request_count
+        data_tests:
+          - positive_or_zero
+      - name: error_rate
+        data_tests:
+          - percentage_between_zero_and_one

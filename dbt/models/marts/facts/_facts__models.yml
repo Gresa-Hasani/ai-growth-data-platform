@@ -1,0 +1,148 @@
+version: 2
+
+models:
+  - name: fact_subscriptions
+    description: >
+      One row per source subscription_id - identical grain to
+      int_user_subscription_history, with dimension surrogate keys
+      resolved on top. Unmatched-key policy (applied consistently across
+      every fact): a NULL dimension key paired with an explicit boolean
+      flag, never a fabricated "unknown" dimension row.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - subscription_id
+    columns:
+      - name: subscription_id
+        description: Technical primary key, inherited unchanged from staging/intermediate.
+        data_tests:
+          - not_null
+          - unique
+      - name: user_key
+        description: FK to dim_users.user_key; NULL when is_user_orphaned.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_users')
+                field: user_key
+              config:
+                severity: warn
+                where: "user_key is not null"
+      - name: organization_key
+        description: FK to dim_organizations.organization_key; NULL when is_organization_unmatched.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_organizations')
+                field: organization_key
+              config:
+                severity: warn
+                where: "organization_key is not null"
+      - name: plan_key
+        description: FK to dim_plans.plan_key.
+      - name: is_recurring_active_now
+        description: >
+          Via the is_subscription_recurring_active macro - status = 'active',
+          or 'canceled' with a still-future cancelled_at (a scheduled, not-
+          yet-effective cancellation). The single source of truth for "is
+          this subscription generating revenue right now," reused unchanged
+          by mart_mrr/mart_arr/mart_customer_churn/mart_revenue_churn/mart_arpu.
+      - name: currency
+        description: Normalized currency code. Never summed across currencies downstream.
+      - name: subscription_amount
+        description: Raw recurring amount for this subscription's own billing_interval.
+        data_tests:
+          - positive_or_zero
+      - name: monthly_equivalent_amount
+        description: subscription_amount normalized to a monthly figure (annual / 12) via the monthly_equivalent_amount macro - the basis for every MRR/ARR/ARPU calculation.
+        data_tests:
+          - positive_or_zero
+
+  - name: fact_invoices
+    description: >
+      One row per source invoice_id - identical grain to
+      int_customer_revenue, with dimension surrogate keys resolved on top.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - invoice_id
+    columns:
+      - name: invoice_id
+        description: Technical primary key, inherited unchanged from staging/intermediate.
+        data_tests:
+          - not_null
+          - unique
+      - name: organization_key
+        description: FK to dim_organizations.organization_key; NULL when is_organization_unmatched.
+        data_tests:
+          - relationships:
+              arguments:
+                to: ref('dim_organizations')
+                field: organization_key
+              config:
+                severity: warn
+                where: "organization_key is not null"
+      - name: plan_key
+        description: FK to dim_plans.plan_key, via the invoice's subscription.
+      - name: billed_amount
+        description: Passthrough from int_customer_revenue.
+        data_tests:
+          - positive_or_zero
+      - name: paid_amount
+        description: Passthrough from int_customer_revenue.
+        data_tests:
+          - positive_or_zero
+      - name: outstanding_amount
+        description: Passthrough from int_customer_revenue.
+        data_tests:
+          - positive_or_zero
+
+  - name: fact_product_usage
+    description: >
+      One row per (date_day, user_id, organization_id, event_name) -
+      identical grain to int_daily_product_usage, with dimension keys
+      resolved. Does not re-aggregate; cannot introduce usage inflation
+      beyond what Phase 4 already verified.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - date_day
+              - user_key
+              - organization_key
+              - event_name
+    columns:
+      - name: date_day
+        description: Calendar date of the events (event time, not ingestion time).
+        data_tests:
+          - not_null
+      - name: event_count
+        description: Passthrough from int_daily_product_usage.
+        data_tests:
+          - positive_or_zero
+
+  - name: fact_api_usage
+    description: >
+      One row per (date_day, organization_id) - identical grain to
+      int_api_usage_by_customer, with organization_key resolved.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns:
+              - date_day
+              - organization_key
+    columns:
+      - name: date_day
+        description: Calendar date of the requests.
+        data_tests:
+          - not_null
+      - name: request_count
+        description: Passthrough from int_api_usage_by_customer.
+        data_tests:
+          - positive_or_zero
+      - name: error_rate
+        description: Passthrough from int_api_usage_by_customer (via safe_divide).
+        data_tests:
+          - percentage_between_zero_and_one

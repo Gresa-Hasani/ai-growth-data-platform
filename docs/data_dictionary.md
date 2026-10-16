@@ -141,3 +141,31 @@ See [dbt_intermediate.md](dbt_intermediate.md) for the full customer-identity, a
 **Source:** `int_conversion_funnel` + cancellation/most-recent-status from `stg_billing__subscriptions`.
 **Purpose:** lifecycle milestones plus a current-state `lifecycle_stage` snapshot - not a reconstructed historical journey.
 **Key transformations:** `lifecycle_stage` = most recent subscription's status (deterministic tie-break on `updated_at`/`subscription_id`), or `'no_subscription'`.
+
+## Dimensions, facts, and marts (Phase 5)
+
+See [dbt_marts.md](dbt_marts.md) for full rationale, every join's cardinality
+proof, and verified example figures; [business_metrics.md](business_metrics.md)
+for exact metric formulas. Grains only, here:
+
+| Model | Grain |
+|---|---|
+| `dim_users` | one row per user |
+| `dim_organizations` | one row per organization |
+| `dim_plans` | one row per (plan_name, billing_interval) observed |
+| `dim_date` | one row per calendar date |
+| `fact_subscriptions` | one row per subscription_id |
+| `fact_invoices` | one row per invoice_id |
+| `fact_product_usage` | one row per (date_day, user_id, organization_id, event_name) |
+| `fact_api_usage` | one row per (date_day, organization_id) |
+| `mart_daily_growth` | one row per date_day |
+| `mart_trial_conversion` | one row per user who started a trial |
+| `mart_acquisition_channels` | one row per (acquisition_channel, currency) |
+| `mart_retention_cohorts` | one row per (cohort_month, period_index) |
+| `mart_feature_adoption` | one row per event_name |
+| `mart_enterprise_growth` | one row per enterprise organization |
+| `mart_mrr` / `mart_arr` / `mart_arpu` | one row per currency, as of today (point-in-time snapshot) |
+| `mart_customer_churn` | one row per organization_type (+ one 'all' row), fixed 30-day period |
+| `mart_revenue_churn` | one row per currency, same fixed 30-day period |
+| `mart_customer_ltv` | one row per (organization_key, currency) |
+| `mart_api_usage` | one row per (month_start_date, organization_key) |

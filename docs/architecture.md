@@ -157,6 +157,16 @@ guarantees (no row multiplication) and a documented user-vs-organization "custom
 convention. Still no final KPIs (MRR, churn, conversion rate) - those are Phase 5. See
 [dbt_intermediate.md](dbt_intermediate.md) and [data_dictionary.md](data_dictionary.md).
 
+**Phase 5** - Dimensional models (`dim_users`, `dim_organizations`, `dim_plans`, `dim_date`) and
+core facts (`fact_subscriptions`, `fact_invoices`, `fact_product_usage`, `fact_api_usage`) in the
+`analytics` schema, plus 6 Growth marts and 7 Revenue marts (`mart_mrr`, `mart_arr`,
+`mart_customer_churn`, `mart_revenue_churn`, `mart_customer_ltv`, `mart_arpu`, `mart_api_usage`,
+`mart_daily_growth`, `mart_trial_conversion`, `mart_acquisition_channels`,
+`mart_retention_cohorts`, `mart_feature_adoption`, `mart_enterprise_growth`). MRR/ARR/ARPU are
+explicitly documented as point-in-time snapshots, not historical time series - this source has no
+status-change history to reconstruct one from (that's what Phase 6 snapshots are for). See
+[dbt_marts.md](dbt_marts.md) and [business_metrics.md](business_metrics.md).
+
 ## Pipeline flow (updated)
 
 ```
@@ -175,10 +185,13 @@ dbt sources + freshness (Phase 3)
 dbt staging: stg_<domain>__<entity> (Phase 3)
         |
         v
-dbt intermediate: int_<entity> (Phase 4) <-- you are here
+dbt intermediate: int_<entity> (Phase 4)
         |
         v
-dbt marts / analytics (Phase 5+ - not yet implemented)
+dbt dimensions + facts: dim_*, fact_* (Phase 5)
+        |
+        v
+dbt marts: mart_<growth|revenue>_* (Phase 5) <-- you are here
 ```
 
 Raw ingestion (Python, Phase 2) and analytical transformation (dbt, Phase 3+) are deliberately
@@ -186,5 +199,5 @@ separate concerns: ingestion's job is "land the source data faithfully, however 
 starts at `staging` and is "make it trustworthy." Nothing upstream of `raw.*` is ever modified to
 make a dbt model easier to write.
 
-Everything else in the diagram above the "you are here" marker (marts, the API's business
-endpoints, and the AI agent) is built out in later phases per the project plan.
+Not yet implemented: dbt snapshots/SCD Type 2 history, incremental fact models, the FastAPI
+analytics API, and the AI Data Analyst Agent - all later phases per the project plan.

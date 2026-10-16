@@ -1,4 +1,4 @@
-.PHONY: setup generate-data ingest ingest-users ingestion-report test-ingestion dbt-deps dbt-debug dbt-freshness dbt-run-staging dbt-test-staging dbt-build-staging dbt-run-intermediate dbt-test-intermediate dbt-build-intermediate dbt-run dbt-test dbt-docs quality pipeline api test docs clean
+.PHONY: setup generate-data ingest ingest-users ingestion-report test-ingestion dbt-deps dbt-debug dbt-freshness dbt-run-staging dbt-test-staging dbt-build-staging dbt-run-intermediate dbt-test-intermediate dbt-build-intermediate dbt-run-marts dbt-test-marts dbt-build-marts dbt-run dbt-test dbt-docs quality pipeline api test docs clean
 
 setup: ## Install Python deps and bring up Postgres + API containers
 	pip install -e ".[dev]"
@@ -45,6 +45,15 @@ dbt-test-intermediate: ## Run only the intermediate tests (Phase 4)
 
 dbt-build-intermediate: ## Run + test the intermediate layer together (Phase 4)
 	cd dbt && dbt build --select intermediate
+
+dbt-run-marts: ## Build dimensions, facts, and growth/revenue marts (Phase 5)
+	cd dbt && dbt run --select tag:dimensions tag:facts tag:growth tag:revenue
+
+dbt-test-marts: ## Test dimensions, facts, and growth/revenue marts (Phase 5)
+	cd dbt && dbt test --select tag:dimensions tag:facts tag:growth tag:revenue
+
+dbt-build-marts: ## Run + test dimensions/facts/marts together (Phase 5)
+	cd dbt && dbt build --select tag:dimensions tag:facts tag:growth tag:revenue
 
 dbt-run: ## Build staging/intermediate/mart models (Phase 3+)
 	cd dbt && dbt run
