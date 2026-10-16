@@ -8,11 +8,12 @@ API, and a governed AI data analyst agent.
 
 > **Status:** Phase 1 (Architecture & Infrastructure), Phase 2 (Synthetic Source Systems &
 > Ingestion), Phase 3 (dbt Staging Layer), Phase 4 (dbt Intermediate Layer), Phase 5 (Dimensions,
-> Facts & Growth/Revenue Marts), and Phase 6 (Incremental Processing & SCD Type 2 Snapshots)
-> complete. See [docs/architecture.md](docs/architecture.md) for the full design,
-> [docs/ingestion.md](docs/ingestion.md) for source systems and ingestion, and
+> Facts & Growth/Revenue Marts), Phase 6 (Incremental Processing & SCD Type 2 Snapshots), and
+> Phase 7 (Data Quality & Observability) complete. See [docs/architecture.md](docs/architecture.md)
+> for the full design, [docs/ingestion.md](docs/ingestion.md) for source systems and ingestion, and
 > [docs/dbt_staging.md](docs/dbt_staging.md) / [docs/dbt_intermediate.md](docs/dbt_intermediate.md) /
 > [docs/dbt_marts.md](docs/dbt_marts.md) / [docs/incremental_processing.md](docs/incremental_processing.md) /
+> [docs/data_quality_observability.md](docs/data_quality_observability.md) /
 > [docs/business_metrics.md](docs/business_metrics.md) / [docs/data_dictionary.md](docs/data_dictionary.md)
 > for the dbt layers. **Not yet implemented:** the FastAPI analytics API and the AI Data Analyst
 > Agent - do not assume these exist. The complete README (business problem, security, results) is
@@ -112,6 +113,25 @@ make dbt-run-incremental            # normal incremental run of the 3 converted 
 make dbt-full-refresh-incremental   # controlled full-refresh recovery
 make dbt-snapshot                   # run both SCD Type 2 snapshots
 make dbt-test-snapshots             # test both snapshots
+```
+
+### Data Quality & Observability (Phase 7)
+
+`scripts/run_quality_checks.py` runs a 16-check catalog (structural, referential, business-rule,
+freshness, snapshot, volume-anomaly) against the live database, persisting every run and every
+individual check's outcome to `monitoring.quality_runs`/`monitoring.data_quality_results` - never
+silently dropping a failing check, never fabricating a historical baseline on the first run.
+Extends (never replaces) Phase 3's WARN-vs-ERROR policy for intentional synthetic-data anomalies:
+the 9 pre-existing dbt WARNs remain exactly as visible as before. Exit codes: `0` (PASS/WARN -
+checks ran, possibly found something worth a look), `1` (FAIL - a critical rule was violated),
+`2` (the runner itself couldn't execute, e.g. no DB connection). Full catalog, severity rationale,
+and diagnostic SQL: [docs/data_quality_observability.md](docs/data_quality_observability.md).
+
+```bash
+make quality          # run every check
+make quality-latest   # show the most recently persisted run, without re-running
+make quality-json     # machine-readable JSON output
+make test-quality     # run the quality-framework's own test suite
 ```
 
 ## Repository structure

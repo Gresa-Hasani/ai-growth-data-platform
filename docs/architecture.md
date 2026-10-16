@@ -179,6 +179,14 @@ problem the snapshot solves instead. See [incremental_processing.md](incremental
 for the full strategy, a real bug this phase found and fixed (a NULL-unique-key issue in the two
 aggregate facts), and the documented limits of what snapshots can and cannot recover.
 
+**Phase 7** - A persistent data quality/observability framework: `monitoring.quality_runs` +
+`monitoring.data_quality_results` (new tables, same audit-run + detail-table convention as
+Phase 2's `ingestion_runs`/`rejected_records`), and `scripts/run_quality_checks.py` running a
+16-check catalog across structural, referential, business-rule, freshness, snapshot, and
+volume-anomaly categories. Extends - never replaces - Phase 3's WARN-vs-ERROR policy for
+intentional synthetic-data anomalies; the 9 pre-existing dbt WARNs remain exactly as visible as
+before. See [data_quality_observability.md](data_quality_observability.md).
+
 ## Pipeline flow (updated)
 
 ```
@@ -203,7 +211,10 @@ dbt intermediate: int_<entity> (Phase 4)
 dbt dimensions + facts: dim_*, fact_* (Phase 5; 3 facts incremental as of Phase 6)
         |
         v
-dbt marts: mart_<growth|revenue>_* (Phase 5) <-- you are here
+dbt marts: mart_<growth|revenue>_* (Phase 5)
+        |
+        v
+scripts/run_quality_checks.py --> monitoring.quality_runs / data_quality_results (Phase 7) <-- you are here
 ```
 
 Raw ingestion (Python, Phase 2) and analytical transformation (dbt, Phase 3+) are deliberately

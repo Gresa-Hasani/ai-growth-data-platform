@@ -189,3 +189,13 @@ every historical version of a record - their row count is *not* comparable to
 `stg_billing__subscriptions`/`stg_crm__accounts`' row counts (one row per *current* record) the
 way every other grain comparison in this document is. Compare only the **current-record subset**
 (`WHERE dbt_valid_to IS NULL`) against staging if you need a like-for-like count.
+
+## Monitoring / data quality tables (Phase 7)
+
+See [data_quality_observability.md](data_quality_observability.md) for the full check catalog,
+PASS/WARN/FAIL/exit-code semantics, and example diagnostic SQL.
+
+| Table | Grain | Purpose |
+|---|---|---|
+| `monitoring.quality_runs` | one row per quality-check execution | Run-level summary: status, counts, duration |
+| `monitoring.data_quality_results` | one row per (run_id, check) | Individual check outcome: status, severity, failed/total rows, structured details |

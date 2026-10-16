@@ -23,6 +23,7 @@ services:
       - ./app/db/init_schemas.sql:/docker-entrypoint-initdb.d/01_init_schemas.sql:ro
       - ./app/db/raw_tables.sql:/docker-entrypoint-initdb.d/02_raw_tables.sql:ro
       - ./app/db/monitoring_tables.sql:/docker-entrypoint-initdb.d/03_monitoring_tables.sql:ro
+      - ./app/db/quality_tables.sql:/docker-entrypoint-initdb.d/04_quality_tables.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-analytics} -d ${POSTGRES_DB:-growth_platform}"]
       interval: 5s

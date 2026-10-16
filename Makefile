@@ -1,4 +1,4 @@
-.PHONY: setup generate-data ingest ingest-users ingestion-report test-ingestion dbt-deps dbt-debug dbt-freshness dbt-run-staging dbt-test-staging dbt-build-staging dbt-run-intermediate dbt-test-intermediate dbt-build-intermediate dbt-run-marts dbt-test-marts dbt-build-marts dbt-run-incremental dbt-full-refresh-incremental dbt-snapshot dbt-test-snapshots dbt-run dbt-test dbt-docs quality pipeline api test docs clean
+.PHONY: setup generate-data ingest ingest-users ingestion-report test-ingestion dbt-deps dbt-debug dbt-freshness dbt-run-staging dbt-test-staging dbt-build-staging dbt-run-intermediate dbt-test-intermediate dbt-build-intermediate dbt-run-marts dbt-test-marts dbt-build-marts dbt-run-incremental dbt-full-refresh-incremental dbt-snapshot dbt-test-snapshots dbt-run dbt-test dbt-docs quality quality-latest quality-json test-quality pipeline api test docs clean
 
 setup: ## Install Python deps and bring up Postgres + API containers
 	pip install -e ".[dev]"
@@ -73,8 +73,17 @@ dbt-run: ## Build staging/intermediate/mart models (Phase 3+)
 dbt-test: ## Run dbt tests (Phase 3+)
 	cd dbt && dbt test
 
-quality: ## Run standalone data quality checks (Phase 7)
+quality: ## Run the full data quality check suite (Phase 7)
 	python scripts/run_quality_checks.py
+
+quality-latest: ## Show the most recently persisted quality run (Phase 7)
+	python scripts/run_quality_checks.py --show-latest
+
+quality-json: ## Run quality checks and emit machine-readable JSON (Phase 7)
+	python scripts/run_quality_checks.py --json
+
+test-quality: ## Run only the quality-framework test suite (Phase 7)
+	pytest tests/unit/test_quality_checks_unit.py tests/integration/test_quality_checks_integration.py -v
 
 pipeline: ## Run the full orchestrated pipeline end-to-end (Phase 24)
 	python scripts/run_pipeline.py
