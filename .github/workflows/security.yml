@@ -1,0 +1,134 @@
+name: Security and dependency checks
+
+# Separate from ci.yml: these checks don't need a database or Docker, so
+# they get their own short-feedback job rather than being bolted onto an
+# unrelated workflow. Same triggers as ci.yml, so a PR gets both results
+# together.
+"on":
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  dependency-audit:
+    name: Python dependency vulnerability scan (pip-audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project with every optional extra (their dependencies must be scanned too)
+        run: pip install -e ".[dev,openai,anthropic]"
+
+      - name: Install pip-audit
+        run: pip install "pip-audit==2.9.0"
+
+      - name: Run pip-audit
+        # Reports actual findings with full detail (CVE id, affected
+        # versions, fix version) and exits non-zero if any real
+        # vulnerability is found - this step is never configured to always
+        # succeed. `--skip-editable` excludes this repository's own
+        # editable install (it isn't published on PyPI, so pip-audit can't
+        # look it up - that's an expected skip, not a vulnerability
+        # finding; `--strict` would turn that benign skip into a false
+        # failure on every run, which is why it's deliberately not used
+        # here). pip-audit queries the public PyPA advisory database over
+        # the network, which is this job's one documented external
+        # dependency (see docs/ci_cd_and_testing.md "Security and
+        # dependency checks").
+        run: pip-audit --skip-editable
+
+  secrets-and-config-check:
+    name: Secret-scanning and safe-config checks (offline, no third-party service)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository with full history
+        # Full history (not just HEAD) so a secret committed in an earlier
+        # commit, and since removed, is still caught.
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install the small set of pure-Python packages these checks need
+        run: pip install pyyaml
+
+      - name: Scan every commit's diff for likely committed secrets
+        # Deterministic, fully offline, no third-party action/service - a
+        # small, explicit pattern set (AWS access keys, PEM private key
+        # headers, generic cloud-provider key prefixes, a non-placeholder
+        # password embedded in a postgresql:// URL) checked against every
+        # commit's added lines. Never prints a matched line's full content
+        # in the common secrets case (AWS/PEM/sk-/postgres passwords) -
+        # only the file and line number - so a real finding doesn't leak
+        # the secret into the public Actions log.
+        run: python scripts/scan_for_secrets.py
+
+      - name: .env.example must contain placeholders only, never a real credential
+        run: |
+          if git show HEAD:.env.example | grep -E "^(ANTHROPIC_API_KEY|OPENAI_API_KEY)=sk-"; then
+            echo "::error::.env.example contains what looks like a real, non-placeholder API key"
+            exit 1
+          fi
+          if git show HEAD:.env.example | grep -E "PASSWORD=" | grep -v "change_me_locally"; then
+            echo "::error::.env.example contains a password value that is not the documented 'change_me_locally' placeholder"
+            exit 1
+          fi
+          echo ".env.example contains only documented placeholders."
+
+      - name: Optional provider packages (openai, anthropic) must stay optional
+        # Regression guard for Phase 9's core design decision: installing/
+        # running the platform with the DEFAULT provider (Ollama) must
+        # never require the openai/anthropic SDKs. Fails if either package
+        # is ever moved into the main [project.dependencies] list.
+        run: |
+          python -c "
+          import tomllib
+          with open('pyproject.toml', 'rb') as f:
+              data = tomllib.load(f)
+          core_deps = ' '.join(data['project']['dependencies']).lower()
+          for pkg in ('openai', 'anthropic'):
+              assert pkg not in core_deps, f'{pkg} must stay under [project.optional-dependencies], not core dependencies'
+          optional = data['project']['optional-dependencies']
+          assert 'openai' in optional and 'anthropic' in optional
+          print('openai/anthropic remain optional-only dependencies.')
+          "
+
+      - name: Every workflow must declare explicit, minimal permissions
+        # Fails if a future workflow is ever added without a top-level
+        # `permissions:` block (which would otherwise default to broader,
+        # implicit permissions).
+        run: |
+          python -c "
+          import pathlib
+          import yaml
+          failures = []
+          for path in sorted(pathlib.Path('.github/workflows').glob('*.yml')):
+              with open(path) as f:
+                  doc = yaml.safe_load(f)
+              if 'permissions' not in doc:
+                  failures.append(str(path))
+          if failures:
+              raise SystemExit('missing top-level permissions: block in: ' + ', '.join(failures))
+          print('every workflow declares explicit permissions.')
+          "

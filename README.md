@@ -10,8 +10,8 @@ API, and a governed AI data analyst agent.
 > Ingestion), Phase 3 (dbt Staging Layer), Phase 4 (dbt Intermediate Layer), Phase 5 (Dimensions,
 > Facts & Growth/Revenue Marts), Phase 6 (Incremental Processing & SCD Type 2 Snapshots), Phase 7
 > (Data Quality & Observability), Phase 8 (Self-Service Analytics API), Phase 9 (AI Data Analyst
-> Agent), and Phase 10 (Security Hardening & SQL Validation) complete. See
-> [docs/architecture.md](docs/architecture.md) for the full design,
+> Agent), Phase 10 (Security Hardening & SQL Validation), and Phase 11 (CI/CD & Automated Testing)
+> complete. See [docs/architecture.md](docs/architecture.md) for the full design,
 > [docs/ingestion.md](docs/ingestion.md) for source systems and ingestion, and
 > [docs/dbt_staging.md](docs/dbt_staging.md) / [docs/dbt_intermediate.md](docs/dbt_intermediate.md) /
 > [docs/dbt_marts.md](docs/dbt_marts.md) / [docs/incremental_processing.md](docs/incremental_processing.md) /
@@ -19,8 +19,8 @@ API, and a governed AI data analyst agent.
 > [docs/analytics_api.md](docs/analytics_api.md) / [docs/business_metrics.md](docs/business_metrics.md) /
 > [docs/data_dictionary.md](docs/data_dictionary.md) /
 > [docs/ai_data_analyst_agent.md](docs/ai_data_analyst_agent.md) /
-> [docs/security_and_sql_validation.md](docs/security_and_sql_validation.md) for the full
-> layer-by-layer detail.
+> [docs/security_and_sql_validation.md](docs/security_and_sql_validation.md) /
+> [docs/ci_cd_and_testing.md](docs/ci_cd_and_testing.md) for the full layer-by-layer detail.
 > **Not yet implemented:** general natural-language-to-SQL, a standalone API authentication/
 > authorization layer, and request-size-limiting middleware - the Phase 9 agent remains
 > deliberately scoped to a fixed metric catalog with no arbitrary query execution, and Phase 10's
@@ -216,6 +216,31 @@ docker compose up -d
 pytest tests/unit/test_security_sql_validator.py tests/unit/test_agent_security.py -v
 pytest tests/integration/test_security_db_integration.py \
        tests/integration/test_security_sql_injection.py -v
+```
+
+### CI/CD & Automated Testing (Phase 11)
+
+Two GitHub Actions workflows (`.github/workflows/ci.yml`, `.github/workflows/security.yml`), on
+every pull request, every push to `main`, and manual dispatch: lint (`ruff check .` + import/
+OpenAPI-schema/YAML-config checks), unit tests (mocked providers, no database, no live LLM), a
+Docker Compose config-validation + image-build + liveness smoke test, a `dbt build` +
+PostgreSQL-integration job against a disposable, freshly-provisioned database (real
+`analytics_ro` least-privilege role, real SQL-injection-resistance tests, real audit-log writes -
+never a superuser standing in for the real role separation), and a separate security workflow
+(dependency-vulnerability scanning via `pip-audit`, offline git-history secret scanning, and
+config-safety checks). The established dbt quality baseline (`PASS=247 WARN=9 ERROR=0 TOTAL=256`)
+is reproduced from a completely fresh database and compared explicitly - a genuine `ERROR` always
+fails the build; a baseline drift is surfaced as a reviewable warning, never silently absorbed.
+Nothing in the mandatory pipeline depends on live Ollama inference or a commercial LLM API being
+reachable. Full workflow structure, local-reproduction commands, and known limitations (no
+real-Ollama CI job; no remote-run badge until an actual workflow has executed on GitHub):
+[docs/ci_cd_and_testing.md](docs/ci_cd_and_testing.md).
+
+```bash
+ruff check .
+pytest tests/unit -v
+docker compose config --quiet && docker compose build analytics-api
+python scripts/scan_for_secrets.py
 ```
 
 ## Repository structure

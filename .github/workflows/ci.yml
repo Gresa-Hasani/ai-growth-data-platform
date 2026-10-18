@@ -1,0 +1,329 @@
+name: CI
+
+# Fast checks (lint, unit tests, Docker config/build) run on every pull
+# request and every push to main; the heavier dbt+integration job runs
+# alongside them (not gated behind the fast jobs) so its own failure is
+# visible as early as possible rather than appearing only after a second,
+# serialized stage - see docs/ci_cd_and_testing.md "Workflow structure" for
+# the tradeoff.
+"on":
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Only the contents of the repo are ever read - no job in this workflow
+# writes to the repo, comments on a PR, or publishes a package/image.
+permissions:
+  contents: read
+
+# A new push to the same PR/branch supersedes the previous run's result -
+# but pushes to main are never cancelled mid-flight, since that's the
+# branch other work is based on.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  lint:
+    name: Lint, imports, and OpenAPI schema
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install project (dev extras)
+        run: pip install -e ".[dev]"
+
+      - name: Ruff (lint)
+        run: ruff check .
+
+      - name: Verify every application package imports cleanly
+        run: |
+          python -c "
+          import app.main
+          import app.agent.service
+          import app.agent.planner
+          import app.agent.executor
+          import app.agent.answer
+          import app.agent.audit
+          import app.security.sql_validator
+          import app.db.session
+          import ingestion.pipeline
+          import scripts.generate_data
+          import scripts.run_quality_checks
+          print('all application packages imported successfully')
+          "
+
+      - name: Verify the FastAPI OpenAPI schema generates without error
+        run: |
+          python -c "
+          import json
+          from app.main import app
+          schema = app.openapi()
+          assert '/health' in schema['paths']
+          assert '/ready' in schema['paths']
+          assert '/api/v1/agent/ask' in schema['paths']
+          assert '/api/v1/agent/health' in schema['paths']
+          print(f'OpenAPI schema OK - {len(schema[\"paths\"])} paths')
+          "
+
+      - name: Validate YAML configuration files parse correctly
+        run: |
+          python -c "
+          import yaml
+          for path in ['docker-compose.yml', 'dbt/dbt_project.yml', 'dbt/profiles_example.yml']:
+              with open(path) as f:
+                  yaml.safe_load(f)
+              print(f'{path}: valid YAML')
+          "
+
+  unit-tests:
+    name: Unit tests (mocked providers, no database)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install project (dev extras)
+        run: pip install -e ".[dev]"
+
+      - name: Run unit test suite
+        # tests/unit/* never touches a database or a live LLM provider -
+        # provider contract tests use monkeypatched HTTP (see
+        # tests/unit/test_agent_providers.py); Phase 10's SQL-validator and
+        # SQL-injection-resistance unit tests run here too.
+        run: pytest tests/unit -v --junitxml=test-results/unit.xml
+
+      - name: Upload unit test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: test-results/unit.xml
+          retention-days: 14
+
+  docker-validate:
+    name: Docker Compose config, image build, and liveness smoke test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Validate docker-compose.yml
+        # Every value in docker-compose.yml has a ${VAR:-default} fallback,
+        # so this validates correctly with no .env file present - exactly
+        # the "clean checkout, no local secrets" scenario this job runs in.
+        run: docker compose config --quiet
+
+      - name: Build the analytics-api image
+        run: docker compose build analytics-api
+
+      - name: Start the full stack
+        run: docker compose up -d
+
+      - name: Wait for Postgres and the API container to report healthy
+        run: |
+          for i in $(seq 1 30); do
+            api_status=$(docker inspect --format='{{.State.Health.Status}}' growth_platform_api 2>/dev/null || echo "starting")
+            pg_status=$(docker inspect --format='{{.State.Health.Status}}' growth_platform_postgres 2>/dev/null || echo "starting")
+            echo "attempt $i: postgres=$pg_status api=$api_status"
+            if [ "$pg_status" = "healthy" ]; then
+              break
+            fi
+            sleep 3
+          done
+          [ "$pg_status" = "healthy" ] || { echo "Postgres never became healthy"; exit 1; }
+
+      - name: Smoke test /health (pure liveness - no database, no synthetic data required)
+        # /ready is deliberately NOT checked here: this job never runs
+        # generate_data/ingestion/dbt, so the analytics objects /ready
+        # requires don't exist yet - that is verified against REAL data
+        # instead, in the dbt-and-integration job's pytest suite (via
+        # FastAPI's TestClient, exercising the same /ready code path
+        # against a fully-built database). See docs/ci_cd_and_testing.md
+        # "Why /ready isn't checked here."
+        run: |
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:8000/health > /dev/null; then
+              echo "API is live"
+              curl -s http://localhost:8000/health
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "API never responded to /health"
+          docker compose logs analytics-api
+          exit 1
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: docker compose logs
+
+      - name: Tear down the stack
+        if: always()
+        run: docker compose down -v
+
+  dbt-and-integration:
+    name: dbt build + PostgreSQL integration tests (isolated, disposable DB)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: ci_analytics
+          POSTGRES_PASSWORD: ci_password
+          POSTGRES_DB: growth_platform_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ci_analytics -d growth_platform_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POSTGRES_USER: ci_analytics
+      POSTGRES_PASSWORD: ci_password
+      POSTGRES_DB: growth_platform_ci
+      ANALYTICS_RO_PASSWORD: ci_ro_password
+      PGHOST: localhost
+      PGPORT: 5432
+      PGPASSWORD: ci_password
+      HOST_DATABASE_URL: postgresql://ci_analytics:ci_password@localhost:5432/growth_platform_ci
+      DATABASE_URL: postgresql://ci_analytics:ci_password@localhost:5432/growth_platform_ci
+      HOST_READ_ONLY_DATABASE_URL: postgresql://analytics_ro:ci_ro_password@localhost:5432/growth_platform_ci
+      READ_ONLY_DATABASE_URL: postgresql://analytics_ro:ci_ro_password@localhost:5432/growth_platform_ci
+      DBT_POSTGRES_HOST: localhost
+      DBT_POSTGRES_PORT: 5432
+      DBT_PROFILES_DIR: /home/runner/.dbt
+      # Deliberately unreachable: proves the agent degrades to its
+      # deterministic rule-based planner/template answer writer rather
+      # than depending on live Ollama inference being available on the
+      # runner. See docs/ai_data_analyst_agent.md and
+      # docs/ci_cd_and_testing.md "AI Agent tests in CI."
+      LLM_PROVIDER: ollama
+      OLLAMA_BASE_URL: http://localhost:1
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python ${{ env.PYTHON_VERSION }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install project (dev extras)
+        run: pip install -e ".[dev]"
+
+      - name: Ensure postgresql-client (psql) is available
+        run: |
+          if ! psql --version > /dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends postgresql-client
+          fi
+
+      - name: Initialize schemas, tables, and the least-privilege analytics_ro role
+        # Mirrors docker-compose.yml's docker-entrypoint-initdb.d mounts
+        # exactly, in the same numbered order (01-06) - GitHub Actions
+        # job-level `services:` containers start before checkout, so they
+        # can't bind-mount repo files the way docker-compose.yml does;
+        # applying them explicitly here, against the already-running
+        # service container, is the supported equivalent. See
+        # scripts/init_db.sh and docs/ci_cd_and_testing.md.
+        # Invoked via `bash` explicitly (not relying on the executable bit)
+        # since this repository is developed on Windows, where git does not
+        # reliably preserve POSIX executable permissions.
+        run: bash scripts/init_db.sh
+
+      - name: Generate synthetic source data (small scale, seed 42)
+        run: python scripts/generate_data.py --scale small --seed 42
+
+      - name: Ingest all sources into raw.*
+        run: python -m ingestion.pipeline --source all
+
+      - name: Install dbt packages
+        run: |
+          mkdir -p "$DBT_PROFILES_DIR"
+          cp dbt/profiles_example.yml "$DBT_PROFILES_DIR/profiles.yml"
+          cd dbt && dbt deps
+
+      - name: dbt build
+        id: dbt_build
+        run: |
+          cd dbt
+          set -o pipefail
+          dbt build 2>&1 | tee ../dbt_build_output.log
+
+      - name: Compare dbt build result to the established baseline (PASS=247 WARN=9 ERROR=0 TOTAL=256)
+        run: |
+          summary=$(grep -E "^\s*Done\. PASS=" dbt_build_output.log | tail -1)
+          echo "dbt summary: $summary"
+          pass=$(echo "$summary" | grep -oE "PASS=[0-9]+" | cut -d= -f2)
+          warn=$(echo "$summary" | grep -oE "WARN=[0-9]+" | cut -d= -f2)
+          error=$(echo "$summary" | grep -oE "ERROR=[0-9]+" | cut -d= -f2)
+          total=$(echo "$summary" | grep -oE "TOTAL=[0-9]+" | cut -d= -f2)
+          echo "parsed: PASS=$pass WARN=$warn ERROR=$error TOTAL=$total"
+
+          if [ "$error" != "0" ]; then
+            echo "::error::dbt build reported $error genuine ERROR(s) - this is never acceptable, regardless of the intentional-warning baseline."
+            exit 1
+          fi
+
+          if [ "$pass" != "247" ] || [ "$warn" != "9" ] || [ "$total" != "256" ]; then
+            echo "::warning::dbt result (PASS=$pass WARN=$warn TOTAL=$total) differs from the established baseline (PASS=247 WARN=9 TOTAL=256)."
+            echo "::warning::This is not automatically a failure - the baseline changes legitimately whenever a model/test is intentionally added, removed, or its synthetic-anomaly rate is intentionally changed (see docs/data_quality_observability.md and docs/ci_cd_and_testing.md 'Updating the baseline')."
+            echo "::warning::It IS a problem if this change was not intentional - review the dbt build log artifact for this run before merging."
+          else
+            echo "dbt build result matches the established baseline exactly."
+          fi
+
+      - name: Run data-quality checks against the freshly built database
+        run: python scripts/run_quality_checks.py
+
+      - name: Run PostgreSQL integration tests
+        # Covers Phase 7-10: analytics reads, quality-monitoring tables,
+        # monitoring.ai_query_logs, read-only transaction enforcement, the
+        # analytics_ro role's grants, denied writes, SQL-injection
+        # resistance, and safe audit behavior - all against this job's
+        # real, freshly-built, disposable database and its real
+        # analytics_ro role (not a superuser standing in for it).
+        run: pytest tests/integration -v --junitxml=test-results/integration.xml
+
+      - name: Upload integration test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-test-results
+          path: test-results/integration.xml
+          retention-days: 14
+
+      - name: Upload dbt build log and artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbt-build-log
+          path: |
+            dbt_build_output.log
+            dbt/target/run_results.json
+          retention-days: 14
+          if-no-files-found: ignore

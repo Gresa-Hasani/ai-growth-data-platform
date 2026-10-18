@@ -235,6 +235,15 @@ defensive SQL-validation module (`app/security/sql_validator.py`) for a possible
 controlled-SQL feature - nothing in this platform executes client- or model-supplied SQL today. See
 [security_and_sql_validation.md](security_and_sql_validation.md).
 
+**Phase 11** - A GitHub Actions automation layer over Phases 1-10, not a behavior change: lint +
+unit tests (no database, no live LLM) run on every PR/push; a Docker Compose config/build/liveness
+job; a `dbt build` + PostgreSQL integration job against a disposable, freshly-provisioned database
+that exercises the real `analytics_ro` role (never a superuser standing in for it); and a separate
+dependency/secret-scanning workflow. The established dbt quality baseline is reproduced from a
+completely fresh database and compared explicitly - a genuine `ERROR` always fails the build; an
+intentional baseline drift is a reviewable warning, never silently absorbed. See
+[ci_cd_and_testing.md](ci_cd_and_testing.md).
+
 ## Pipeline flow (updated)
 
 ```
