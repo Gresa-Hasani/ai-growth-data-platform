@@ -280,7 +280,13 @@ FastAPI analytics API: /api/v1/* (Phase 8)
 AI Data Analyst Agent: /api/v1/agent/* (Phase 9)
         |
         v
-Security hardening: read_only_engine + analytics_ro role + SQL validator (Phase 10) <-- you are here
+Security hardening: read_only_engine + analytics_ro role + SQL validator (Phase 10)
+        |
+        v
+GitHub Actions CI/CD: lint + unit + docker-validate + dbt-and-integration + security scans (Phase 11)
+        |
+        v
+Documentation audit + evidence-based performance review (Phase 12) <-- you are here
 ```
 
 Raw ingestion (Python, Phase 2) and analytical transformation (dbt, Phase 3+) are deliberately
@@ -295,3 +301,36 @@ this agent is, and is not"), and Phase 10's SQL validator
 (`app/security/sql_validator.py`) is a defensive boundary that is explicitly **not** wired into any
 endpoint (see [security_and_sql_validation.md](security_and_sql_validation.md) §2 and "Known
 limitations").
+
+## Database-enforced vs. application-level controls
+
+Worth stating explicitly, since the two are easy to conflate:
+
+- **Database-enforced** (PostgreSQL itself refuses the action, independent of any Python code):
+  the `read_only_engine`'s `postgresql_readonly=True` transaction setting (any write attempt raises
+  `ReadOnlySqlTransaction`, even for a fully-privileged role); the `analytics_ro` role's own GRANTs
+  (`SELECT` on `analytics`/`monitoring` only, `INSERT` on `monitoring.ai_query_logs` only - enforced
+  by Postgres's privilege system, not by this application remembering not to misuse its own
+  connection); dbt's/ingestion's own unique/not-null/foreign-key constraints where declared.
+- **Application-level** (this codebase's own logic, not something Postgres would reject on its
+  own if bypassed): the AI Agent's fixed metric catalog and typed-tool dispatch (`app/agent/
+  catalog.py`/`executor.py` - there is no SQL statement for Postgres to refuse, because none is
+  ever constructed from untrusted input); `AnalyticalPlan`'s field/length/control-character
+  validation; the currency-fabrication guard on LLM answers; every `app/services/*.py` query's use
+  of bound parameters (correct *application* practice - Postgres has no concept of "this value came
+  from a client" to enforce on its own); FastAPI's request-schema validation (`max_length`,
+  `ConfigDict(extra="forbid")`, etc.).
+
+Both categories matter, but they fail differently: an application-level control has a bug class
+("what if this code path is skipped"); a database-enforced one does not, for the specific action it
+covers - which is exactly why Phase 10 added database-level read-only enforcement in addition to
+(not instead of) the application-level design that already existed.
+
+## Performance
+
+Phase 12 investigated PostgreSQL query plans, API/agent request latency, dbt build time, and
+ingestion throughput, using `EXPLAIN ANALYZE`, a new repeatable benchmark script
+(`scripts/benchmark.py`), and the existing dbt/quality tooling. **Conclusion: no code-level
+performance change was made** - every area investigated was already correct by design or already
+fast at this project's data scale, with evidence recorded for each. Full investigation, baseline
+numbers, and the reasoning for not adding speculative indexes/caching: [performance.md](performance.md).

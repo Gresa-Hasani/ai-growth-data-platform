@@ -6,13 +6,12 @@ A production-style analytics platform simulating the data engineering infrastruc
 fast-growing AI SaaS company: Python ingestion, a layered dbt warehouse, a self-service analytics
 API, and a governed AI data analyst agent.
 
-> **Status:** Phase 1 (Architecture & Infrastructure), Phase 2 (Synthetic Source Systems &
-> Ingestion), Phase 3 (dbt Staging Layer), Phase 4 (dbt Intermediate Layer), Phase 5 (Dimensions,
-> Facts & Growth/Revenue Marts), Phase 6 (Incremental Processing & SCD Type 2 Snapshots), Phase 7
-> (Data Quality & Observability), Phase 8 (Self-Service Analytics API), Phase 9 (AI Data Analyst
-> Agent), Phase 10 (Security Hardening & SQL Validation), and Phase 11 (CI/CD & Automated Testing)
-> complete. See [docs/architecture.md](docs/architecture.md) for the full design,
-> [docs/ingestion.md](docs/ingestion.md) for source systems and ingestion, and
+> **Status:** All 12 planned phases complete - Architecture & Infrastructure; Synthetic Source
+> Systems & Ingestion; dbt Staging/Intermediate/Marts layers; Incremental Processing & SCD Type 2
+> Snapshots; Data Quality & Observability; Self-Service Analytics API; AI Data Analyst Agent;
+> Security Hardening & SQL Validation; CI/CD & Automated Testing; and Documentation & Performance
+> (this phase). See [docs/architecture.md](docs/architecture.md) for the full design,
+> [docs/ingestion.md](docs/ingestion.md) for source systems and ingestion,
 > [docs/dbt_staging.md](docs/dbt_staging.md) / [docs/dbt_intermediate.md](docs/dbt_intermediate.md) /
 > [docs/dbt_marts.md](docs/dbt_marts.md) / [docs/incremental_processing.md](docs/incremental_processing.md) /
 > [docs/data_quality_observability.md](docs/data_quality_observability.md) /
@@ -20,16 +19,35 @@ API, and a governed AI data analyst agent.
 > [docs/data_dictionary.md](docs/data_dictionary.md) /
 > [docs/ai_data_analyst_agent.md](docs/ai_data_analyst_agent.md) /
 > [docs/security_and_sql_validation.md](docs/security_and_sql_validation.md) /
-> [docs/ci_cd_and_testing.md](docs/ci_cd_and_testing.md) for the full layer-by-layer detail.
+> [docs/ci_cd_and_testing.md](docs/ci_cd_and_testing.md) /
+> [docs/performance.md](docs/performance.md) for the full layer-by-layer detail.
 > **Not yet implemented:** general natural-language-to-SQL, a standalone API authentication/
-> authorization layer, and request-size-limiting middleware - the Phase 9 agent remains
-> deliberately scoped to a fixed metric catalog with no arbitrary query execution, and Phase 10's
-> SQL validator (`app/security/sql_validator.py`) is a defensive, independently-tested boundary that
-> is **not** wired into any endpoint; do not assume unrestricted NL-to-SQL, authenticated endpoints,
-> or a bounded request body size exist. See "Known limitations" in
-> [docs/security_and_sql_validation.md](docs/security_and_sql_validation.md) for the full, honest
-> list. The complete README (business problem, results) is written incrementally as later phases
-> land.
+> authorization layer, and request-size-limiting middleware - the AI Agent remains deliberately
+> scoped to a fixed metric catalog with no arbitrary query execution, and the SQL validator
+> (`app/security/sql_validator.py`) is a defensive, independently-tested boundary that is **not**
+> wired into any endpoint; do not assume unrestricted NL-to-SQL, authenticated endpoints, or a
+> bounded request body size exist. See "Known limitations" below for the full, honest list -
+> including the performance review's conclusion that no code-level optimization was needed at this
+> project's current data scale.
+
+## Prerequisites
+
+- Docker and Docker Compose (v2 - `docker compose`, not the legacy `docker-compose`).
+- Python 3.12+ and `pip`.
+- [dbt-core](https://docs.getdbt.com/) and `dbt-postgres` (installed via `pip install -e ".[dev]"`
+  below - not a separate install).
+- Optional: [Ollama](https://ollama.ai) installed locally if you want to exercise the AI Agent with
+  real LLM inference rather than its deterministic fallback path (see "AI Data Analyst Agent"
+  below) - nothing else in this README requires it.
+
+## Environment configuration: `.env.example` vs. `.env`
+
+`.env.example` is committed and contains **placeholders only** (e.g. `change_me_locally`) - never a
+real credential. `.env` is your own local copy (gitignored, never committed) that `docker-compose`,
+`dbt`, and the ingestion/quality scripts all read from. Create it once with `cp .env.example .env`;
+the defaults work as-is for local development. See
+[security_and_sql_validation.md](docs/security_and_sql_validation.md) §6 for what each credential-
+shaped variable is actually used for and why none of the defaults are real secrets.
 
 ## Quickstart
 
@@ -37,15 +55,30 @@ API, and a governed AI data analyst agent.
 cp .env.example .env
 docker compose up -d
 curl http://localhost:8000/health
+curl http://localhost:8000/ready    # 503 until the steps below have populated real data - expected
 
 pip install -e ".[dev]"
 python scripts/generate_data.py --scale small --seed 42   # or: make generate-data
 export HOST_DATABASE_URL=postgresql://analytics:change_me_locally@localhost:5433/growth_platform
 python -m ingestion.pipeline --source all                 # or: make ingest
 
-cd dbt && dbt deps && dbt debug && dbt build --select staging+
-dbt build --select tag:dimensions tag:facts tag:growth tag:revenue   # or: make dbt-build-marts
+# dbt runs on the HOST, not inside a container, and needs its own profile -
+# see dbt/profiles_example.yml's header comment for the full explanation.
+mkdir -p ~/.dbt && cp dbt/profiles_example.yml ~/.dbt/profiles.yml
+export DBT_POSTGRES_HOST=localhost DBT_POSTGRES_PORT=5433
+export POSTGRES_USER=analytics POSTGRES_PASSWORD=change_me_locally POSTGRES_DB=growth_platform
+
+cd dbt && dbt deps && dbt debug && dbt build   # full build: staging -> intermediate -> marts -> snapshots
+cd ..
+
+python scripts/run_quality_checks.py           # or: make quality
+curl http://localhost:8000/ready               # now 200 - the analytics objects it checks exist
 ```
+
+If port `5433` is already taken on your machine (common - many dev machines run a native Postgres
+on `5432`, which `docker-compose.yml` already avoids by mapping to `5433` instead), override
+`POSTGRES_HOST_PORT` in `.env` and update the two `5433`s above to match - see
+`.env.example`'s own comments for the full host-port story.
 
 ## dbt Transformation Layer
 
@@ -242,6 +275,51 @@ pytest tests/unit -v
 docker compose config --quiet && docker compose build analytics-api
 python scripts/scan_for_secrets.py
 ```
+
+### Documentation and Performance (Phase 12)
+
+A documentation audit and an evidence-based performance review, closing out the project.
+Documentation was corrected where it had drifted from the actual code (stale `db/session.py`
+description, a missing dbt-profile setup step in this very README's Quickstart, an outdated
+"out of scope" claim about the AI Agent). Performance was investigated with `EXPLAIN ANALYZE` on
+real queries, a new repeatable benchmark script, and direct code inspection of every candidate area
+the phase called out (indexes, SQLAlchemy session usage, FastAPI sync/async routes, agent
+catalog/provider construction, dbt/ingestion throughput) - **no code-level optimization was
+needed**: every area was already correct by design or already fast at this project's data scale,
+each with recorded evidence rather than a guess. Full investigation and the one real (non-
+performance) fix it surfaced along the way: [docs/performance.md](docs/performance.md).
+
+```bash
+python scripts/benchmark.py              # live API/agent latency, against a running stack
+python scripts/benchmark.py --json       # machine-readable output
+```
+
+## Troubleshooting
+
+| Symptom | Likely cause / fix |
+|---|---|
+| `docker compose up -d` containers unhealthy | Check `docker compose logs postgres` / `docker compose logs analytics-api`. A common cause is port `5433` already in use - see "Prerequisites"/`.env.example`'s `POSTGRES_HOST_PORT` override. |
+| `dbt debug`/`dbt build` fails to connect | You likely skipped copying `dbt/profiles_example.yml` to `~/.dbt/profiles.yml`, or didn't export `DBT_POSTGRES_HOST`/`DBT_POSTGRES_PORT`/`POSTGRES_USER`/`POSTGRES_PASSWORD`/`POSTGRES_DB` first - see the corrected Quickstart above. |
+| `GET /ready` returns 503 | Expected until you've run the full data pipeline (generate → ingest → `dbt build`) at least once - `/ready` checks that real analytics objects exist, not just that Postgres is reachable. `GET /health` (pure liveness) should still return 200 at this point. |
+| `scripts/run_quality_checks.py` reports `required_relations_exist` FAIL | A model your dbt run didn't include is missing - run a full `cd dbt && dbt build` (no `--select`) rather than one of the `make dbt-build-*` partial targets, then re-run the check. |
+| `scripts/run_quality_checks.py` reports `raw_source_freshness` FAIL | Your ingested data is simply old relative to the freshness check's time window - re-run `generate_data.py` + the ingestion pipeline to refresh it; this is expected behavior, not a bug. |
+| AI Agent `/api/v1/agent/ask` always uses the deterministic fallback, never real inference | `LLM_PROVIDER=ollama` but Ollama isn't reachable from wherever the API process is running - see [ai_data_analyst_agent.md](docs/ai_data_analyst_agent.md) "Docker networking" for the `host.docker.internal` vs `localhost` distinction between running the API in Docker vs. directly on the host. |
+| `pytest tests/integration` all skip | No live Postgres reachable at `HOST_DATABASE_URL` - this is an honest `SKIP`, not a failure; start `docker compose up -d` (or a disposable test database - see [ci_cd_and_testing.md](docs/ci_cd_and_testing.md)) first. |
+
+## Known limitations
+
+- No authentication/authorization layer on any endpoint - appropriate for this project's local-dev
+  scope; see [analytics_api.md](docs/analytics_api.md) "Known limitations."
+- No request-body-size-limiting middleware - see [security_and_sql_validation.md](docs/security_and_sql_validation.md) "Known limitations."
+- `app/security/sql_validator.py` is a standalone, unwired defensive module - no endpoint executes
+  client- or model-supplied SQL today; do not treat its existence as an active runtime control.
+- No real-Ollama GitHub Actions job - the mandatory CI pipeline never depends on live LLM inference
+  being reachable; see [ci_cd_and_testing.md](docs/ci_cd_and_testing.md) "AI Agent tests in CI."
+- No response caching on any analytics endpoint - not currently a measured performance problem at
+  this project's data scale; see [performance.md](docs/performance.md).
+- This is a learning/portfolio project simulating a company's data stack with synthetic data - it
+  has not been load-tested, has no multi-tenant isolation, and is not intended for production
+  deployment as-is.
 
 ## Repository structure
 

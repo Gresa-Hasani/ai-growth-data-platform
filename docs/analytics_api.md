@@ -10,7 +10,11 @@ client-supplied table/query fragment.
 app/
   main.py              FastAPI app: route registration, /health, /ready
   config.py             ApiSettings (pagination/date-window defaults) + SUPPORTED_CURRENCIES
-  db/session.py          SQLAlchemy engine/session (unchanged since Phase 1)
+  db/session.py          SQLAlchemy engine/session. As of Phase 10, every route below reads
+                          through get_read_only_db() (a database-enforced read-only transaction,
+                          see docs/security_and_sql_validation.md), not the plain get_db() this
+                          doc originally described - that engine still exists, used only by the
+                          AI Agent's own audit-log write (Phase 9/10) and by tests.
   api/v1/                 Routes: HTTP handling, query params, status codes, response models
     growth.py, revenue.py, usage.py, customers.py, quality.py
   schemas/                 Pydantic request/response models (one module per domain)
@@ -60,6 +64,13 @@ New in this phase, all optional with documented defaults, `API_`-prefixed (see `
 
 No secrets; nothing added to `.env.example` beyond documentation, since all of the above have safe
 built-in defaults.
+
+**Phase 10 addition**: every free-text filter/path parameter that previously had no length bound
+(`acquisition_channel`, `event_name`, `organization_id`, `organization_type`, `customer_id`,
+`run_id`) now has one (100-200 characters, enforced by FastAPI's `Query`/`Path` validation, 422 on
+violation) - defense-in-depth against pathological input, not an injection fix (every one of these
+values was already safely bound-parameterized; see
+[security_and_sql_validation.md](security_and_sql_validation.md) §1).
 
 ## Health vs. readiness
 
@@ -217,10 +228,13 @@ container.
 - No authentication/authorization layer - every endpoint is open, appropriate for this project's
   local-dev scope; a real deployment would need one before this API left a trusted network.
 - No response caching - every request re-queries Postgres. At this dataset's scale (hundreds to
-  low thousands of rows per mart) this has not been a measured performance problem; no cache was
-  added speculatively.
+  low thousands of rows per mart) this remains, as of the Phase 12 performance investigation, not a
+  measured performance problem (`EXPLAIN ANALYZE` on every representative query completes in
+  single-digit milliseconds via sequential scans Postgres itself judged optimal at this table size -
+  see [performance.md](performance.md)); no cache was added speculatively.
 - `/customers/{customer_id}`'s usage summary is a fixed trailing-30-day window, not configurable
   per-request in this phase.
-- The AI Data Analyst Agent, natural-language-to-SQL, and the full SQL security/validation layer
-  are explicitly out of scope for Phase 8 - this API exposes only the fixed, hardcoded query set
+- General natural-language-to-SQL and the full SQL-validation-as-an-active-control layer remain
+  explicitly out of scope (the AI Data Analyst Agent itself shipped in Phase 9 - see
+  [ai_data_analyst_agent.md](ai_data_analyst_agent.md) - and reuses this API's own query set
   documented above, nothing dynamic.
