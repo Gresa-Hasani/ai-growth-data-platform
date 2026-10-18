@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db.session import get_db
+from app.db.session import get_read_only_db
 from app.schemas.common import Page, PageMeta
 from app.schemas.usage import ApiUsageRecord, DailyUsageRecord, FeatureAdoptionRecord
 from app.services import usage_service
@@ -21,8 +21,8 @@ router = APIRouter(prefix="/api/v1/analytics/usage", tags=["usage"])
     description="Grain: one row per event_name. adopting_user_count (distinct users) is kept separate from total_event_count (raw volume) - a power user's volume never inflates the adoption rate.",
 )
 def feature_adoption(
-    event_name: str | None = Query(default=None, description="Filter to one event type."),
-    db: Session = Depends(get_db),
+    event_name: str | None = Query(default=None, max_length=200, description="Filter to one event type."),
+    db: Session = Depends(get_read_only_db),
 ) -> list[dict]:
     return usage_service.get_feature_adoption(db, event_name)
 
@@ -40,10 +40,10 @@ def feature_adoption(
 def daily_usage(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    organization_id: str | None = Query(default=None),
+    organization_id: str | None = Query(default=None, max_length=100),
     limit: int = Query(default=settings.default_page_size, ge=1, le=settings.max_page_size),
     offset: int = Query(default=0, ge=0),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_read_only_db),
 ) -> dict:
     items, total = usage_service.get_daily_usage(db, start_date, end_date, organization_id, limit, offset)
     return {"items": items, "meta": PageMeta(limit=limit, offset=offset, total=total)}
@@ -61,10 +61,10 @@ def daily_usage(
 def api_usage(
     start_date: date | None = Query(default=None),
     end_date: date | None = Query(default=None),
-    organization_id: str | None = Query(default=None),
+    organization_id: str | None = Query(default=None, max_length=100),
     limit: int = Query(default=settings.default_page_size, ge=1, le=settings.max_page_size),
     offset: int = Query(default=0, ge=0),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_read_only_db),
 ) -> dict:
     items, total = usage_service.get_api_usage(db, start_date, end_date, organization_id, limit, offset)
     return {"items": items, "meta": PageMeta(limit=limit, offset=offset, total=total)}

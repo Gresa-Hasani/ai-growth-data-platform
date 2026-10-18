@@ -113,3 +113,28 @@ def test_ready_fails_honestly_when_database_unreachable(monkeypatch):
     body = response.json()
     assert "nouser" not in str(body)
     assert "nopass" not in str(body)
+
+
+def test_ready_failure_never_logs_the_password_either(monkeypatch, caplog):
+    """Phase 10: the response body not leaking credentials (tested above)
+    isn't sufficient on its own - `app/main.py` also logs the exception via
+    `logger.error("...: %s", exc)`, so the *logged* text must not contain
+    the password either. psycopg2/SQLAlchemy's own OperationalError message
+    is confirmed (by this test) not to echo the password - it names the
+    user but never the password - which is what makes this logging call
+    safe as written, without needing to change it."""
+    import logging
+
+    from sqlalchemy import create_engine
+
+    from app import main as app_main
+
+    broken_engine = create_engine("postgresql://nouser:nopass_secret_value@localhost:1/doesnotexist")
+    monkeypatch.setattr(app_main, "engine", broken_engine)
+
+    client = TestClient(app_main.app)
+    with caplog.at_level(logging.ERROR):
+        client.get("/ready")
+
+    logged_text = " ".join(r.getMessage() for r in caplog.records)
+    assert "nopass_secret_value" not in logged_text

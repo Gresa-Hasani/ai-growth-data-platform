@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db.session import get_db
+from app.db.session import get_read_only_db
 from app.schemas.common import Page, PageMeta
 from app.schemas.growth import (
     AcquisitionChannelStat,
@@ -32,7 +32,7 @@ router = APIRouter(prefix="/api/v1/analytics/growth", tags=["growth"])
 def daily_growth(
     start_date: date | None = Query(default=None, description="Inclusive start date."),
     end_date: date | None = Query(default=None, description="Inclusive end date."),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_read_only_db),
 ) -> list[dict]:
     return growth_service.get_daily_growth(db, start_date, end_date)
 
@@ -49,8 +49,8 @@ def daily_growth(
     ),
 )
 def acquisition_channels(
-    acquisition_channel: str | None = Query(default=None, description="Filter to one channel."),
-    db: Session = Depends(get_db),
+    acquisition_channel: str | None = Query(default=None, max_length=100, description="Filter to one channel."),
+    db: Session = Depends(get_read_only_db),
 ) -> list[dict]:
     return growth_service.get_acquisition_channels(db, acquisition_channel)
 
@@ -70,7 +70,7 @@ def trial_conversion(
     is_observation_complete: bool | None = Query(default=None),
     limit: int = Query(default=settings.default_page_size, ge=1, le=settings.max_page_size),
     offset: int = Query(default=0, ge=0),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_read_only_db),
 ) -> dict:
     items, total = growth_service.get_trial_conversion(
         db, is_converted, is_observation_complete, limit, offset
@@ -90,6 +90,6 @@ def trial_conversion(
 )
 def retention_cohorts(
     cohort_month: date | None = Query(default=None, description="Filter to one cohort's signup month."),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_read_only_db),
 ) -> list[dict]:
     return growth_service.get_retention_cohorts(db, cohort_month)

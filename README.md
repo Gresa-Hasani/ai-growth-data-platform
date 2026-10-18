@@ -9,19 +9,27 @@ API, and a governed AI data analyst agent.
 > **Status:** Phase 1 (Architecture & Infrastructure), Phase 2 (Synthetic Source Systems &
 > Ingestion), Phase 3 (dbt Staging Layer), Phase 4 (dbt Intermediate Layer), Phase 5 (Dimensions,
 > Facts & Growth/Revenue Marts), Phase 6 (Incremental Processing & SCD Type 2 Snapshots), Phase 7
-> (Data Quality & Observability), Phase 8 (Self-Service Analytics API), and Phase 9 (AI Data Analyst
-> Agent) complete. See [docs/architecture.md](docs/architecture.md) for the full design,
+> (Data Quality & Observability), Phase 8 (Self-Service Analytics API), Phase 9 (AI Data Analyst
+> Agent), and Phase 10 (Security Hardening & SQL Validation) complete. See
+> [docs/architecture.md](docs/architecture.md) for the full design,
 > [docs/ingestion.md](docs/ingestion.md) for source systems and ingestion, and
 > [docs/dbt_staging.md](docs/dbt_staging.md) / [docs/dbt_intermediate.md](docs/dbt_intermediate.md) /
 > [docs/dbt_marts.md](docs/dbt_marts.md) / [docs/incremental_processing.md](docs/incremental_processing.md) /
 > [docs/data_quality_observability.md](docs/data_quality_observability.md) /
 > [docs/analytics_api.md](docs/analytics_api.md) / [docs/business_metrics.md](docs/business_metrics.md) /
 > [docs/data_dictionary.md](docs/data_dictionary.md) /
-> [docs/ai_data_analyst_agent.md](docs/ai_data_analyst_agent.md) for the full layer-by-layer detail.
-> **Not yet implemented:** general natural-language-to-SQL and a standalone SQL security/validation
-> layer - the Phase 9 agent is deliberately scoped to a fixed metric catalog with no arbitrary query
-> execution; do not assume unrestricted NL-to-SQL exists. The complete README (business problem,
-> security, results) is written incrementally as later phases land.
+> [docs/ai_data_analyst_agent.md](docs/ai_data_analyst_agent.md) /
+> [docs/security_and_sql_validation.md](docs/security_and_sql_validation.md) for the full
+> layer-by-layer detail.
+> **Not yet implemented:** general natural-language-to-SQL, a standalone API authentication/
+> authorization layer, and request-size-limiting middleware - the Phase 9 agent remains
+> deliberately scoped to a fixed metric catalog with no arbitrary query execution, and Phase 10's
+> SQL validator (`app/security/sql_validator.py`) is a defensive, independently-tested boundary that
+> is **not** wired into any endpoint; do not assume unrestricted NL-to-SQL, authenticated endpoints,
+> or a bounded request body size exist. See "Known limitations" in
+> [docs/security_and_sql_validation.md](docs/security_and_sql_validation.md) for the full, honest
+> list. The complete README (business problem, results) is written incrementally as later phases
+> land.
 
 ## Quickstart
 
@@ -182,6 +190,32 @@ curl http://localhost:8000/api/v1/agent/health
 pytest tests/unit/test_agent_providers.py tests/unit/test_agent_planning.py \
        tests/unit/test_agent_execution.py tests/unit/test_agent_api.py \
        tests/unit/test_agent_audit.py -v
+```
+
+### Security Hardening & SQL Validation (Phase 10)
+
+An audit-and-harden pass over Phases 8-9, not a rebuild: a line-by-line SQL-injection audit of
+every `app/services/*`/`app/agent/tools.py` query found no vulnerability (bound parameters
+throughout), proven empirically with live injection-attempt tests. What actually changed: every
+analytics/agent read now goes through a **database-enforced read-only transaction**
+(`app/db/session.py`'s `read_only_engine`, `postgresql_readonly=True`), backed by a new
+least-privilege `analytics_ro` Postgres role (`SELECT` on `analytics`/`monitoring` only, plus the
+one documented exception - `INSERT` on `monitoring.ai_query_logs` for the AI agent's own audit
+log); the agent's `AnalyticalPlan` now rejects unexpected fields and oversized/control-character
+filter values; LLM-generated answers are rejected (falling back to the deterministic template) if
+they mention a currency not actually present in the tool's returned data; and a standalone,
+**unwired** defensive SQL-validation module (`app/security/sql_validator.py`, structured parsing
+via `sqlglot`, never regex) was added for a possible future controlled-SQL feature - nothing in
+this platform executes client- or model-supplied SQL today. Full verified-controls list, the SQL
+validator's documented limitations, and the honestly-reported known gaps (no request-body-size
+limit, no authentication layer):
+[docs/security_and_sql_validation.md](docs/security_and_sql_validation.md).
+
+```bash
+docker compose up -d
+pytest tests/unit/test_security_sql_validator.py tests/unit/test_agent_security.py -v
+pytest tests/integration/test_security_db_integration.py \
+       tests/integration/test_security_sql_injection.py -v
 ```
 
 ## Repository structure

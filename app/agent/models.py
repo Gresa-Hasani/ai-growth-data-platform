@@ -9,7 +9,7 @@ from datetime import date
 from enum import Enum
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class Intent(str, Enum):
@@ -41,32 +41,65 @@ class MetricId(str, Enum):
     QUALITY_RUN_DETAIL = "quality_run_detail"
 
 
+_FILTER_FIELD_MAX_LENGTH = 200
+
+# Phase 10: reject a filter value containing a NUL byte or a raw ASCII
+# control character outright. These values are always passed through
+# SQLAlchemy bound parameters, so they can never alter SQL statement
+# structure - this is defense-in-depth against malformed/anomalous input
+# reaching the service layer at all, not an injection fix (there is no
+# injection to fix; see docs/security_and_sql_validation.md's SQL-injection
+# audit for the evidence).
+_CONTROL_CHARS = frozenset(chr(c) for c in range(32) if c not in (9, 10, 13))
+
+
+def _reject_control_characters(v: str | None, field_name: str) -> str | None:
+    if v is not None and any(c in _CONTROL_CHARS for c in v):
+        raise ValueError(f"{field_name} must not contain control characters")
+    return v
+
+
 class AnalyticalPlan(BaseModel):
     """The LLM's question-understanding output, in a bounded, typed shape.
     Every field is validated against app.agent.catalog before execution -
     an unrecognized metric_id, a currency outside {USD,EUR,GBP}, a limit
     above the configured ceiling, etc. all raise InvalidPlanError rather
     than being silently coerced or passed through.
+
+    `extra="forbid"`: a field the LLM invents that isn't declared here
+    (e.g. an attempted "sql"/"tool_name"/"table" override) is a validation
+    FAILURE, not a silently-ignored extra key - see
+    tests/unit/test_agent_security.py for the adversarial-field tests this
+    exists for.
     """
+
+    model_config = ConfigDict(extra="forbid")
 
     intent: Intent
     metric_id: MetricId | None = None
     start_date: date | None = None
     end_date: date | None = None
-    currency: str | None = None
-    organization_id: str | None = None
-    organization_type: str | None = None
-    acquisition_channel: str | None = None
-    event_name: str | None = None
-    run_id: str | None = None
+    currency: str | None = Field(default=None, max_length=10)
+    organization_id: str | None = Field(default=None, max_length=_FILTER_FIELD_MAX_LENGTH)
+    organization_type: str | None = Field(default=None, max_length=_FILTER_FIELD_MAX_LENGTH)
+    acquisition_channel: str | None = Field(default=None, max_length=_FILTER_FIELD_MAX_LENGTH)
+    event_name: str | None = Field(default=None, max_length=_FILTER_FIELD_MAX_LENGTH)
+    run_id: str | None = Field(default=None, max_length=_FILTER_FIELD_MAX_LENGTH)
     limit: int = 20
     requires_clarification: bool = False
-    clarification_question: str | None = None
+    clarification_question: str | None = Field(default=None, max_length=500)
 
     @field_validator("currency")
     @classmethod
     def _upper_currency(cls, v: str | None) -> str | None:
         return v.upper() if v else v
+
+    @field_validator(
+        "organization_id", "organization_type", "acquisition_channel", "event_name", "run_id",
+    )
+    @classmethod
+    def _no_control_characters(cls, v: str | None, info) -> str | None:
+        return _reject_control_characters(v, info.field_name)
 
 
 class ToolProvenance(BaseModel):

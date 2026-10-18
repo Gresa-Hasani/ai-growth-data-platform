@@ -48,6 +48,7 @@ from app.agent.executor import execute_plan
 from app.agent.models import AgentAnswer, AgentExecutionMetadata
 from app.agent.providers.base import LLMProvider, ProviderHealth
 from app.agent.providers.factory import build_provider
+from app.db.session import SessionLocal
 
 logger = logging.getLogger("app.agent.service")
 
@@ -68,6 +69,12 @@ def check_health(settings: AgentSettings | None = None) -> ProviderHealth:
 
 
 def ask(db: Session, question: str, settings: AgentSettings | None = None) -> AgentAskResult:
+    """`db` is the session used for the analytical READ path only (in
+    production, a database-enforced read-only session from
+    app.db.session.get_read_only_db - see that module). Audit logging
+    always opens its own separate, writable session (see `_safe_audit`
+    below) rather than reusing `db`, because a read-only session cannot
+    issue the audit INSERT no matter what table grants its role has."""
     settings = settings or default_settings
     start = time.monotonic()
     used_real_inference = False
@@ -123,7 +130,7 @@ def ask(db: Session, question: str, settings: AgentSettings | None = None) -> Ag
         )
         outcome = "clarification_needed" if isinstance(exc, ClarificationNeededError) else "error"
         _safe_audit(
-            db, settings, metadata, outcome,
+            settings, metadata, outcome,
             plan.intent.value if plan else None,
             plan.metric_id.value if plan and plan.metric_id else None,
         )
@@ -138,7 +145,7 @@ def ask(db: Session, question: str, settings: AgentSettings | None = None) -> Ag
         tool_invocation_count=1,
         error_category=None,
     )
-    _safe_audit(db, settings, metadata, "success", plan.intent.value, plan.metric_id.value if plan.metric_id else None)
+    _safe_audit(settings, metadata, "success", plan.intent.value, plan.metric_id.value if plan.metric_id else None)
     return AgentAskResult(answer=agent_answer, metadata=metadata)
 
 
@@ -153,15 +160,21 @@ def _model_name(settings: AgentSettings) -> str | None:
 
 
 def _safe_audit(
-    db: Session,
     settings: AgentSettings,
     metadata: AgentExecutionMetadata,
     outcome: str,
     intent: str | None,
     metric_id: str | None,
 ) -> None:
+    """Deliberately opens its OWN writable session rather than reusing
+    `ask`'s `db` - see that docstring: `db` may be a database-enforced
+    read-only session, which cannot issue this INSERT regardless of role
+    grants."""
+    audit_db = SessionLocal()
     try:
-        if ai_query_logs_available(db):
-            log_query(db, settings, metadata, outcome, intent, metric_id)
+        if ai_query_logs_available(audit_db):
+            log_query(audit_db, settings, metadata, outcome, intent, metric_id)
     except Exception as exc:  # noqa: BLE001 - audit is strictly non-blocking by policy
         logger.warning("agent audit logging failed (non-blocking): %s", type(exc).__name__)
+    finally:
+        audit_db.close()

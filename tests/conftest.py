@@ -16,3 +16,10 @@ load_dotenv()
 # it already prefers HOST_DATABASE_URL over DATABASE_URL on its own.
 if os.environ.get("HOST_DATABASE_URL"):
     os.environ["DATABASE_URL"] = os.environ["HOST_DATABASE_URL"]
+
+# Same mirroring for Phase 10's read-only role/engine (app/db/session.py's
+# read_only_engine) - HOST_READ_ONLY_DATABASE_URL is the host-reachable twin
+# of READ_ONLY_DATABASE_URL, which otherwise points at the Docker-internal
+# "postgres" host.
+if os.environ.get("HOST_READ_ONLY_DATABASE_URL"):
+    os.environ["READ_ONLY_DATABASE_URL"] = os.environ["HOST_READ_ONLY_DATABASE_URL"]

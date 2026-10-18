@@ -20,6 +20,11 @@ dependencies = [
     "faker>=30.0",
     "numpy>=2.0",
     "httpx>=0.27",
+    # Structured PostgreSQL SQL parsing for app/security/sql_validator.py -
+    # already resolved transitively via dbt-core; pinned directly here since
+    # app/security imports it explicitly and must not break if dbt's own
+    # dependency graph ever drops/shifts it.
+    "sqlglot>=23.0",
 ]
 
 [project.optional-dependencies]

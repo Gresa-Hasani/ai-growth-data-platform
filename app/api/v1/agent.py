@@ -19,7 +19,7 @@ from app.agent.exceptions import (
     ToolExecutionError,
     UnsupportedQuestionError,
 )
-from app.db.session import get_db
+from app.db.session import get_read_only_db
 from app.schemas.agent import (
     AgentAskRequest,
     AgentAskResponse,
@@ -52,7 +52,7 @@ _STATUS_BY_CATEGORY = {
         "docs/ai_data_analyst_agent.md."
     ),
 )
-def ask(request: AgentAskRequest, db: Session = Depends(get_db)) -> AgentAskResponse:
+def ask(request: AgentAskRequest, db: Session = Depends(get_read_only_db)) -> AgentAskResponse:
     try:
         result = service.ask(db, request.question)
     except ClarificationNeededError as exc:

@@ -8,11 +8,14 @@ whole response.
 from __future__ import annotations
 
 import json
+import re
 
-from app.agent.catalog import CatalogEntry
+from app.agent.catalog import SUPPORTED_CURRENCIES, CatalogEntry
 from app.agent.exceptions import InvalidAnswerError
 from app.agent.models import AgentAnswer, AnalyticalPlan, ToolResult
 from app.agent.providers.base import LLMProvider
+
+_CURRENCY_TOKEN_RE = re.compile(r"\b([A-Z]{3})\b")
 
 SYSTEM_PROMPT = """You are an analytics answer writer. You will be given a \
 metric's definition/limitations and the EXACT rows a trusted tool returned. \
@@ -59,7 +62,30 @@ def build_answer(provider: LLMProvider | None, plan: AnalyticalPlan, entry: Cata
     if not partial.answer.strip():
         raise InvalidAnswerError("model returned an empty answer")
 
+    _reject_ungrounded_currency_mentions(partial, tool_result)
+
     return _finalize(partial, plan, entry, tool_result)
+
+
+def _reject_ungrounded_currency_mentions(answer: AgentAnswer, tool_result: ToolResult) -> None:
+    """Fabrication guard: if the metric is currency-bearing, the model's
+    free-text answer/key-findings must not mention a currency that isn't
+    actually present in the tool's returned rows (e.g. claiming an "EUR"
+    figure when the tool only returned USD rows). This is an
+    application-side check on the model's OUTPUT, not a request to the
+    model to police itself - a violation here always falls back to the
+    deterministic, fully-grounded `template_answer` (see service.py)."""
+    currencies_in_rows = {row["currency"] for row in tool_result.rows if isinstance(row.get("currency"), str)}
+    if not currencies_in_rows:
+        return  # this metric has no currency field at all - nothing to ground against
+
+    mentioned_text = answer.answer + " " + " ".join(answer.key_findings)
+    mentioned_currencies = {m for m in _CURRENCY_TOKEN_RE.findall(mentioned_text) if m in SUPPORTED_CURRENCIES}
+    ungrounded = mentioned_currencies - currencies_in_rows
+    if ungrounded:
+        raise InvalidAnswerError(
+            f"model's answer mentions currency/currencies {sorted(ungrounded)} not present in the tool's returned rows"
+        )
 
 
 def template_answer(plan: AnalyticalPlan, entry: CatalogEntry, tool_result: ToolResult) -> AgentAnswer:

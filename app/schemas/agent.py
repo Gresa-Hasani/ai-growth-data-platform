@@ -5,10 +5,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class AgentAskRequest(BaseModel):
+    # extra="forbid": an unexpected request body field (e.g. a client/script
+    # trying to smuggle a "sql"/"override"/"system_prompt" key) is a 422
+    # validation error, not a silently-ignored extra key.
+    model_config = ConfigDict(extra="forbid")
+
     question: str = Field(..., min_length=1, max_length=2000, description="A natural-language analytics question.")
 
 

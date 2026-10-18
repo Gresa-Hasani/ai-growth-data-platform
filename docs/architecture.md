@@ -124,12 +124,22 @@ As actually built in Phase 9, the agent doesn't generate or execute SQL at all -
 for a SQL validator to validate. The LLM only ever chooses among a fixed, closed set of `metric_id`
 values (`app/agent/catalog.py`); each one maps to exactly one typed tool function in
 `app/agent/tools.py`, which calls the same `app/services/*` functions the Phase 8 Analytics API
-itself uses - the same fixed, parameterized queries, the same database session. There is no
-`execute_sql(sql)`-style tool, no client/model-supplied table or column name, and no write path.
-This is a simpler and strictly more constrained design than the SQL-generation-plus-validator
-approach originally sketched here in Phase 1 - see
-[ai_data_analyst_agent.md](ai_data_analyst_agent.md) for the full rationale and the explicit list
-of what was intentionally left out of scope.
+itself uses - the same fixed, parameterized queries. There is no `execute_sql(sql)`-style tool, no
+client/model-supplied table or column name, and no write path. This is a simpler and strictly more
+constrained design than the SQL-generation-plus-validator approach originally sketched here in
+Phase 1 - see [ai_data_analyst_agent.md](ai_data_analyst_agent.md) for the full rationale and the
+explicit list of what was intentionally left out of scope.
+
+As of Phase 10, this is also enforced at the **database level**, not just by the agent's own code
+having no write path: both the agent and the rest of the Analytics API now read through
+`app/db/session.py`'s `read_only_engine`, which puts every connection into a database-enforced
+read-only transaction (PostgreSQL itself rejects any write attempt, independent of the connecting
+role's grants), backed by a dedicated least-privilege `analytics_ro` role with `SELECT` on
+`analytics`/`monitoring` only and exactly one write exception (`INSERT` on the agent's own audit
+table, `monitoring.ai_query_logs`). See
+[security_and_sql_validation.md](security_and_sql_validation.md) §3 for how this was verified
+against the live database, and why the audit log's one permitted write deliberately uses a
+separate, non-read-only session rather than the same one used for analytical reads.
 
 ## Local run
 
@@ -214,6 +224,17 @@ default LLM provider - the platform runs with zero commercial API credentials; O
 opt-in only, never an implicit fallback. See
 [ai_data_analyst_agent.md](ai_data_analyst_agent.md).
 
+**Phase 10** - A security-hardening audit of Phases 8-9, not a rebuild: confirmed (and proved with
+live-injection tests) that every `app/services/*`/`app/agent/tools.py` query already used bound
+parameters correctly; added database-enforced read-only transactions for every analytics/agent
+read (`app/db/session.py`'s `read_only_engine`) backed by a new least-privilege `analytics_ro`
+Postgres role (`SELECT` only, plus one documented `INSERT` exception for the agent's own audit
+log); hardened `AnalyticalPlan` against unexpected fields and oversized/malformed filter values;
+added a currency-fabrication guard on LLM-generated answers; and added a standalone, **unwired**
+defensive SQL-validation module (`app/security/sql_validator.py`) for a possible future
+controlled-SQL feature - nothing in this platform executes client- or model-supplied SQL today. See
+[security_and_sql_validation.md](security_and_sql_validation.md).
+
 ## Pipeline flow (updated)
 
 ```
@@ -247,7 +268,10 @@ scripts/run_quality_checks.py --> monitoring.quality_runs / data_quality_results
 FastAPI analytics API: /api/v1/* (Phase 8)
         |
         v
-AI Data Analyst Agent: /api/v1/agent/* (Phase 9) <-- you are here
+AI Data Analyst Agent: /api/v1/agent/* (Phase 9)
+        |
+        v
+Security hardening: read_only_engine + analytics_ro role + SQL validator (Phase 10) <-- you are here
 ```
 
 Raw ingestion (Python, Phase 2) and analytical transformation (dbt, Phase 3+) are deliberately
@@ -255,6 +279,10 @@ separate concerns: ingestion's job is "land the source data faithfully, however 
 starts at `staging` and is "make it trustworthy." Nothing upstream of `raw.*` is ever modified to
 make a dbt model easier to write.
 
-Not yet implemented: general natural-language-to-SQL and a standalone SQL security/validation
-layer - the Phase 9 agent is deliberately scoped to a fixed metric catalog instead (see
-[ai_data_analyst_agent.md](ai_data_analyst_agent.md) "What this agent is, and is not").
+Not yet implemented: general natural-language-to-SQL, a standalone API authentication/
+authorization layer, and request-size-limiting middleware - the Phase 9 agent remains deliberately
+scoped to a fixed metric catalog (see [ai_data_analyst_agent.md](ai_data_analyst_agent.md) "What
+this agent is, and is not"), and Phase 10's SQL validator
+(`app/security/sql_validator.py`) is a defensive boundary that is explicitly **not** wired into any
+endpoint (see [security_and_sql_validation.md](security_and_sql_validation.md) §2 and "Known
+limitations").

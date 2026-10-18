@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.db.session import get_db
+from app.db.session import get_read_only_db
 from app.schemas.common import Page, PageMeta
 from app.schemas.revenue import ArpuPoint, ArrPoint, ChurnPoint, CustomerLtvRecord, MrrPoint
 from app.services import revenue_service
@@ -25,7 +25,7 @@ CURRENCY_QUERY = Query(default=None, description="USD, EUR, or GBP. Omit to retu
         "one from. See docs/dbt_marts.md 'mart_mrr / mart_arr'."
     ),
 )
-def mrr(currency: str | None = CURRENCY_QUERY, db: Session = Depends(get_db)) -> list[dict]:
+def mrr(currency: str | None = CURRENCY_QUERY, db: Session = Depends(get_read_only_db)) -> list[dict]:
     return revenue_service.get_mrr(db, currency)
 
 
@@ -35,7 +35,7 @@ def mrr(currency: str | None = CURRENCY_QUERY, db: Session = Depends(get_db)) ->
     summary="Annualized Recurring Revenue (MRR x 12), as of today",
     description="Same point-in-time snapshot semantics as /mrr. arr = mrr * 12 for the identical eligible-subscription set, per currency.",
 )
-def arr(currency: str | None = CURRENCY_QUERY, db: Session = Depends(get_db)) -> list[dict]:
+def arr(currency: str | None = CURRENCY_QUERY, db: Session = Depends(get_read_only_db)) -> list[dict]:
     return revenue_service.get_arr(db, currency)
 
 
@@ -51,7 +51,7 @@ def arr(currency: str | None = CURRENCY_QUERY, db: Session = Depends(get_db)) ->
 )
 def churn(
     organization_type: str | None = Query(default=None, description="e.g. 'enterprise', 'startup', or 'all' for the platform-wide figure."),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_read_only_db),
 ) -> list[dict]:
     return revenue_service.get_churn(db, organization_type)
 
@@ -62,7 +62,7 @@ def churn(
     summary="Average Revenue Per paying organization, as of today",
     description="Per-currency snapshot (same semantics as /mrr). ARPU is per PAYING ORGANIZATION, not per user, and not the same as average invoice value.",
 )
-def arpu(currency: str | None = CURRENCY_QUERY, db: Session = Depends(get_db)) -> list[dict]:
+def arpu(currency: str | None = CURRENCY_QUERY, db: Session = Depends(get_read_only_db)) -> list[dict]:
     return revenue_service.get_arpu(db, currency)
 
 
@@ -80,7 +80,7 @@ def customer_ltv(
     currency: str | None = CURRENCY_QUERY,
     limit: int = Query(default=settings.default_page_size, ge=1, le=settings.max_page_size),
     offset: int = Query(default=0, ge=0),
-    db: Session = Depends(get_db),
+    db: Session = Depends(get_read_only_db),
 ) -> dict:
     items, total = revenue_service.get_customer_ltv(db, currency, limit, offset)
     return {"items": items, "meta": PageMeta(limit=limit, offset=offset, total=total)}

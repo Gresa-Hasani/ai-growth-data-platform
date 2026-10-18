@@ -7,6 +7,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-analytics}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me_locally}
       POSTGRES_DB: ${POSTGRES_DB:-growth_platform}
+      # Phase 10: password for the least-privilege `analytics_ro` role - see
+      # app/db/security_roles.sh.
+      ANALYTICS_RO_PASSWORD: ${ANALYTICS_RO_PASSWORD:-change_me_locally_ro}
     ports:
       # Default host port 5433, not 5432: many dev machines already run a
       # native Postgres service on 5432, which silently intercepts the
@@ -25,6 +28,7 @@ services:
       - ./app/db/monitoring_tables.sql:/docker-entrypoint-initdb.d/03_monitoring_tables.sql:ro
       - ./app/db/quality_tables.sql:/docker-entrypoint-initdb.d/04_quality_tables.sql:ro
       - ./app/db/ai_query_logs.sql:/docker-entrypoint-initdb.d/05_ai_query_logs.sql:ro
+      - ./app/db/security_roles.sh:/docker-entrypoint-initdb.d/06_security_roles.sh:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-analytics} -d ${POSTGRES_DB:-growth_platform}"]
       interval: 5s
@@ -39,6 +43,11 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://analytics:change_me_locally@postgres:5432/growth_platform}
+      # Phase 10: the least-privilege role every analytics/agent READ
+      # request actually uses (app/db/session.py's read_only_engine) - see
+      # app/db/security_roles.sh. DATABASE_URL above is only ever used by
+      # this container for the AI agent's audit-log INSERT.
+      READ_ONLY_DATABASE_URL: ${READ_ONLY_DATABASE_URL:-postgresql://analytics_ro:change_me_locally_ro@postgres:5432/growth_platform}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       # LLM_PROVIDER defaults to "ollama" even when unset (see
       # app/agent/config.py) - nothing here forces a commercial provider.
