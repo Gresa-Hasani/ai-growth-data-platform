@@ -16,7 +16,7 @@ import logging
 from fastapi import FastAPI, HTTPException
 from sqlalchemy import text
 
-from app.api.v1 import customers, growth, quality, revenue, usage
+from app.api.v1 import agent, customers, growth, quality, revenue, usage
 from app.db.session import engine
 
 logging.basicConfig(level=logging.INFO)
@@ -33,6 +33,7 @@ app.include_router(revenue.router)
 app.include_router(usage.router)
 app.include_router(customers.router)
 app.include_router(quality.router)
+app.include_router(agent.router)
 
 # Every analytics object a healthy instance must be able to query against.
 _REQUIRED_ANALYTICS_RELATIONS = (

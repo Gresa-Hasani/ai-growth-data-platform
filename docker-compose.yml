@@ -24,6 +24,7 @@ services:
       - ./app/db/raw_tables.sql:/docker-entrypoint-initdb.d/02_raw_tables.sql:ro
       - ./app/db/monitoring_tables.sql:/docker-entrypoint-initdb.d/03_monitoring_tables.sql:ro
       - ./app/db/quality_tables.sql:/docker-entrypoint-initdb.d/04_quality_tables.sql:ro
+      - ./app/db/ai_query_logs.sql:/docker-entrypoint-initdb.d/05_ai_query_logs.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-analytics} -d ${POSTGRES_DB:-growth_platform}"]
       interval: 5s
@@ -39,6 +40,24 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://analytics:change_me_locally@postgres:5432/growth_platform}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # LLM_PROVIDER defaults to "ollama" even when unset (see
+      # app/agent/config.py) - nothing here forces a commercial provider.
+      # "localhost" inside THIS container is the container itself, not the
+      # host running Ollama - OLLAMA_BASE_URL must point at
+      # host.docker.internal (enabled below via extra_hosts) when Ollama
+      # runs on the host. See docs/ai_data_analyst_agent.md "Docker networking".
+      LLM_PROVIDER: ${LLM_PROVIDER:-ollama}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen3:8b}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-4o-mini}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-3-5-haiku-latest}
+    extra_hosts:
+      # Makes host.docker.internal resolve on Linux too (Docker Desktop on
+      # Mac/Windows already provides it natively) - needed only when Ollama
+      # runs on the host rather than as its own container.
+      - "host.docker.internal:host-gateway"
     ports:
       - "8000:8000"
     depends_on:

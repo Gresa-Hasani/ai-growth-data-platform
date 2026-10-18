@@ -31,8 +31,13 @@ dbt marts (dims/facts, growth + revenue marts)
 Analytics API (FastAPI, read models only)
         |
         v
-AI Data Analyst Agent (semantic layer -> SQL -> validator -> read-only execution -> NL answer)
+AI Data Analyst Agent (question -> validated plan against a fixed metric catalog -> one typed,
+read-only tool call reusing the Analytics API's own service layer -> grounded NL answer)
 ```
+
+(As actually built in Phase 9 - see "Why the AI agent never gets raw database credentials" below
+for why this ended up simpler than the SQL-generation-plus-validator design originally sketched
+for this diagram.)
 
 ## Diagram
 
@@ -75,18 +80,18 @@ flowchart TD
         AP1[/metrics, /customers, /growth endpoints/]
     end
 
-    subgraph Agent["AI Data Analyst Agent"]
-        AG1[Semantic layer]
-        AG2[SQL generation]
-        AG3[SQL validator\nread-only role, allowlist, timeouts]
-        AG4[NL explanation]
+    subgraph Agent["AI Data Analyst Agent (Phase 9)"]
+        AG1[Planner: question -> AnalyticalPlan]
+        AG2[Catalog validation\nfixed metric_id allowlist, no raw SQL/table names]
+        AG3[Typed tools -> app/services/* \nsame read-only path the API uses]
+        AG4[Grounded NL answer]
     end
 
     Sources --> Ingestion --> Raw --> DBT --> Analytics
     DBT -.writes results.-> Monitoring
     Ingestion -.writes runs.-> Monitoring
     Analytics --> API
-    Analytics --> AG1 --> AG2 --> AG3 --> Analytics
+    AG1 --> AG2 --> AG3 --> Analytics
     AG3 --> AG4
     AG3 -.writes query log.-> Monitoring
     AP1 --> Users((Growth / RevOps / Product / Eng))
@@ -115,10 +120,16 @@ tagged `+schema: staging` lands in the literal `staging` schema Phase 1 provisio
 
 ## Why the AI agent never gets raw database credentials
 
-The agent only ever executes through a dedicated read-only PostgreSQL role, against an allowlist of
-`analytics.*` tables, through a SQL validator that rejects anything but a single `SELECT` statement,
-enforces a row limit, and applies a query timeout. See `docs/business_metrics.md` (Phase 17) and
-`app/agent/sql_validator.py` (Phase 20) for the full design once implemented.
+As actually built in Phase 9, the agent doesn't generate or execute SQL at all - there's nothing
+for a SQL validator to validate. The LLM only ever chooses among a fixed, closed set of `metric_id`
+values (`app/agent/catalog.py`); each one maps to exactly one typed tool function in
+`app/agent/tools.py`, which calls the same `app/services/*` functions the Phase 8 Analytics API
+itself uses - the same fixed, parameterized queries, the same database session. There is no
+`execute_sql(sql)`-style tool, no client/model-supplied table or column name, and no write path.
+This is a simpler and strictly more constrained design than the SQL-generation-plus-validator
+approach originally sketched here in Phase 1 - see
+[ai_data_analyst_agent.md](ai_data_analyst_agent.md) for the full rationale and the explicit list
+of what was intentionally left out of scope.
 
 ## Local run
 
@@ -194,6 +205,15 @@ the Docker healthcheck target, replacing Phase 1's DB-backed `/health`). Every q
 parameterized SQL string - no client-supplied SQL or table names, currency is never mixed across
 rows, and `customer_id` is always `organization_id`. See [analytics_api.md](analytics_api.md).
 
+**Phase 9** - A constrained AI Data Analyst Agent (`POST /api/v1/agent/ask`, `GET
+/api/v1/agent/health`) layered on top of Phase 8: question -> validated plan (checked against a
+fixed, already-documented metric catalog) -> exactly one read-only tool call reusing the existing
+`app/services/*` functions -> an answer strictly grounded in that tool's returned data. No
+arbitrary SQL execution, no write path, no ingestion/dbt triggering. Ollama (local-only) is the
+default LLM provider - the platform runs with zero commercial API credentials; OpenAI/Anthropic are
+opt-in only, never an implicit fallback. See
+[ai_data_analyst_agent.md](ai_data_analyst_agent.md).
+
 ## Pipeline flow (updated)
 
 ```
@@ -224,7 +244,10 @@ dbt marts: mart_<growth|revenue>_* (Phase 5)
 scripts/run_quality_checks.py --> monitoring.quality_runs / data_quality_results (Phase 7)
         |
         v
-FastAPI analytics API: /api/v1/* (Phase 8) <-- you are here
+FastAPI analytics API: /api/v1/* (Phase 8)
+        |
+        v
+AI Data Analyst Agent: /api/v1/agent/* (Phase 9) <-- you are here
 ```
 
 Raw ingestion (Python, Phase 2) and analytical transformation (dbt, Phase 3+) are deliberately
@@ -232,5 +255,6 @@ separate concerns: ingestion's job is "land the source data faithfully, however 
 starts at `staging` and is "make it trustworthy." Nothing upstream of `raw.*` is ever modified to
 make a dbt model easier to write.
 
-Not yet implemented: the AI Data Analyst Agent, natural-language-to-SQL, and the full SQL
-security/validation layer - later phases per the project plan.
+Not yet implemented: general natural-language-to-SQL and a standalone SQL security/validation
+layer - the Phase 9 agent is deliberately scoped to a fixed metric catalog instead (see
+[ai_data_analyst_agent.md](ai_data_analyst_agent.md) "What this agent is, and is not").

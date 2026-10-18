@@ -9,16 +9,18 @@ API, and a governed AI data analyst agent.
 > **Status:** Phase 1 (Architecture & Infrastructure), Phase 2 (Synthetic Source Systems &
 > Ingestion), Phase 3 (dbt Staging Layer), Phase 4 (dbt Intermediate Layer), Phase 5 (Dimensions,
 > Facts & Growth/Revenue Marts), Phase 6 (Incremental Processing & SCD Type 2 Snapshots), Phase 7
-> (Data Quality & Observability), and Phase 8 (Self-Service Analytics API) complete. See
-> [docs/architecture.md](docs/architecture.md) for the full design,
+> (Data Quality & Observability), Phase 8 (Self-Service Analytics API), and Phase 9 (AI Data Analyst
+> Agent) complete. See [docs/architecture.md](docs/architecture.md) for the full design,
 > [docs/ingestion.md](docs/ingestion.md) for source systems and ingestion, and
 > [docs/dbt_staging.md](docs/dbt_staging.md) / [docs/dbt_intermediate.md](docs/dbt_intermediate.md) /
 > [docs/dbt_marts.md](docs/dbt_marts.md) / [docs/incremental_processing.md](docs/incremental_processing.md) /
 > [docs/data_quality_observability.md](docs/data_quality_observability.md) /
 > [docs/analytics_api.md](docs/analytics_api.md) / [docs/business_metrics.md](docs/business_metrics.md) /
-> [docs/data_dictionary.md](docs/data_dictionary.md) for the full layer-by-layer detail.
-> **Not yet implemented:** the AI Data Analyst Agent, natural-language-to-SQL, and the full SQL
-> security/validation layer - do not assume these exist. The complete README (business problem,
+> [docs/data_dictionary.md](docs/data_dictionary.md) /
+> [docs/ai_data_analyst_agent.md](docs/ai_data_analyst_agent.md) for the full layer-by-layer detail.
+> **Not yet implemented:** general natural-language-to-SQL and a standalone SQL security/validation
+> layer - the Phase 9 agent is deliberately scoped to a fixed metric catalog with no arbitrary query
+> execution; do not assume unrestricted NL-to-SQL exists. The complete README (business problem,
 > security, results) is written incrementally as later phases land.
 
 ## Quickstart
@@ -155,6 +157,31 @@ curl http://localhost:8000/health
 curl http://localhost:8000/ready
 open http://localhost:8000/docs                          # interactive OpenAPI UI
 pytest tests/unit/test_api_unit.py tests/integration/test_api_integration.py -v
+```
+
+### AI Data Analyst Agent (Phase 9)
+
+A constrained, trustworthy natural-language interface onto Phase 8's analytics API - not a general
+chatbot and not text-to-SQL. Every question is interpreted into a typed plan, validated against a
+fixed, already-documented metric catalog (`app/agent/catalog.py`), executed through exactly one
+read-only tool that reuses the existing `app/services/*` functions (no SQL of its own, no write
+path), and answered strictly from the data that tool returned. **Ollama (local-only) is the default
+LLM provider** - the platform and every non-agent endpoint run with zero commercial API credentials;
+OpenAI/Anthropic are supported but strictly opt-in and are never called as an implicit fallback. If
+the configured provider is unavailable, the agent degrades to a deterministic rule-based planner and
+a template-based answer writer rather than failing outright. Full design, the catalog, failure-mode
+table, and a known environment limitation around local-model inference latency, reported honestly
+rather than glossed over: [docs/ai_data_analyst_agent.md](docs/ai_data_analyst_agent.md).
+
+```bash
+ollama pull qwen3:8b                                     # or any model; set OLLAMA_MODEL to match
+docker compose up -d
+curl -X POST http://localhost:8000/api/v1/agent/ask -H "Content-Type: application/json" \
+     -d '{"question": "What is our current MRR?"}'
+curl http://localhost:8000/api/v1/agent/health
+pytest tests/unit/test_agent_providers.py tests/unit/test_agent_planning.py \
+       tests/unit/test_agent_execution.py tests/unit/test_agent_api.py \
+       tests/unit/test_agent_audit.py -v
 ```
 
 ## Repository structure
